@@ -2,9 +2,9 @@ extern crate nalgebra;
 extern crate rand;
 extern crate num_traits;
 
-use nalgebra::{DVector, DMatrix, Scalar, ComplexField};
+use nalgebra::{DVector, DMatrix, Scalar};
 use rand::Rng;
-use num_traits::FromPrimitive , Float;
+use num_traits::{FromPrimitive, Float};
 
 /// Enumeration representing different activation functions that can be used in the neural network.
 #[derive(Debug, Clone, Copy)]
@@ -44,8 +44,9 @@ where
         + std::ops::AddAssign
         + std::ops::MulAssign
         + std::ops::SubAssign
-        + std::ops::Mul<DMatrix<S>, Output = DMatrix<S>>
-        + std::ops::Sub<DMatrix<S>, Output = DMatrix<S>>,
+        + std::ops::Mul<f64, Output = DMatrix<S>>
+        + std::ops::Sub<DMatrix<S>, Output = DMatrix<S>>
+        + Copy,
 {
     /// Creates a new Hextral neural network with the given parameters.
     pub fn new(qft: f64, laplace: f64) -> Self {
