@@ -92,10 +92,10 @@ impl Hextral {
         let gradient_update = learning_rate * gradients;
 
         match regularization {
-            Regularization::L2(lambda) => self.h -= &gradient_update + lambda * &self.h,
+            Regularization::L2(lambda) => self.h -= &gradient_update + *lambda * &self.h,
             Regularization::L1(lambda) => {
                 let signum = self.h.map(|x| x.signum());
-                self.h -= &gradient_update + lambda * &signum;
+                self.h -= &gradient_update + *lambda * &signum;
             }
         }
     }
