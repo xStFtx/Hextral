@@ -1,11 +1,16 @@
-use nalgebra::{DVector, DMatrix};
+extern crate nalgebra;
 
+use nalgebra::{DVector, DMatrix};
+use rand::Rng;
+
+#[derive(Debug)]
 enum ActivationFunction {
     Sigmoid,
     ReLU,
     Tanh,
 }
 
+#[derive(Debug)]
 enum Regularization {
     L2(f64),
     L1(f64),
@@ -19,7 +24,7 @@ struct Hextral {
 
 impl Hextral {
     fn new(qft: f64, laplace: f64) -> Self {
-        let h = DMatrix::from_fn(10, 10, |_, _| rand::random::<f64>() * 0.1);
+        let h = DMatrix::from_fn(10, 10, |_, _| rand::thread_rng().gen::<f64>() * 0.1);
 
         Hextral { h, qft, laplace }
     }
@@ -86,17 +91,17 @@ fn main() {
     // Generate more populated vectors for inputs and targets
     let num_samples = 1000;
     let inputs: Vec<DVector<f64>> = (0..num_samples)
-        .map(|_| DVector::from_iterator(10, (0..10).map(|_| rand::random::<f64>())))
+        .map(|_| DVector::from_iterator(10, (0..10).map(|_| rand::thread_rng().gen::<f64>())))
         .collect();
 
     let targets: Vec<DVector<f64>> = (0..num_samples)
-        .map(|_| DVector::from_iterator(10, (0..10).map(|_| rand::random::<f64>())))
+        .map(|_| DVector::from_iterator(10, (0..10).map(|_| rand::thread_rng().gen::<f64>())))
         .collect();
 
     hextral.train(&inputs, &targets, 0.01, Regularization::L2(0.001), 100);
 
     // Test with a single input vector
-    let input = DVector::from_iterator(10, (0..10).map(|_| rand::random::<f64>()));
+    let input = DVector::from_iterator(10, (0..10).map(|_| rand::thread_rng().gen::<f64>()));
     let prediction = hextral.predict(&input);
     println!("Prediction: {:?}", prediction);
 
