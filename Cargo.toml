@@ -8,6 +8,7 @@ license = "MIT/Apache-2.0"
 [dependencies]
 nalgebra = "0.32"
 rand = "0.8"
+num-traits = "0.2"
 
 [lib]
 name = "hextral"
