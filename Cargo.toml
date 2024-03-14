@@ -11,4 +11,4 @@ rand = "0.8"
 
 [lib]
 name = "hextral"
-repository = "https://github.com/xStFtx/hextral"  # Replace with your repository URL
+repository = "https://github.com/xStFtx/hextral"

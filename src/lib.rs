@@ -1,16 +1,15 @@
 extern crate nalgebra;
+extern crate rand;
 
 use nalgebra::{DVector, DMatrix};
 use rand::Rng;
 
-#[derive(Debug)]
 enum ActivationFunction {
     Sigmoid,
     ReLU,
     Tanh,
 }
 
-#[derive(Debug)]
 enum Regularization {
     L2(f64),
     L1(f64),
@@ -24,7 +23,7 @@ struct Hextral {
 
 impl Hextral {
     fn new(qft: f64, laplace: f64) -> Self {
-        let h = DMatrix::from_fn(10, 10, |_, _| rand::thread_rng().gen::<f64>() * 0.1);
+        let h = DMatrix::from_fn(10, 10, |_, _| rand::thread_rng().gen::<f64>() * 0.1); // Use rand::thread_rng().gen::<f64>()
 
         Hextral { h, qft, laplace }
     }
@@ -79,7 +78,6 @@ impl Hextral {
         }
     }
     
-
     fn triangular_integral(vector: &DVector<f64>) -> f64 {
         vector.iter().enumerate().fold(0.0, |acc, (i, &x)| acc + x * ((i + 1) as f64))
     }
