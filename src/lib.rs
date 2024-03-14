@@ -2,9 +2,9 @@ extern crate nalgebra;
 extern crate rand;
 extern crate num_traits;
 
-use nalgebra::{DVector, DMatrix, Scalar};
+use nalgebra::{DVector, DMatrix, Scalar, ComplexField, Float};
 use rand::Rng;
-use num_traits::{Float, FromPrimitive};
+use num_traits::FromPrimitive;
 
 /// Enumeration representing different activation functions that can be used in the neural network.
 #[derive(Debug, Clone, Copy)]
@@ -38,13 +38,18 @@ pub struct Hextral<S> {
 
 impl<S> Hextral<S>
 where
-    S: Scalar + FromPrimitive + Float,
+    S: Scalar
+        + FromPrimitive
+        + Float
+        + std::ops::AddAssign
+        + std::ops::MulAssign
+        + std::ops::SubAssign
+        + std::ops::Mul<DMatrix<S>, Output = DMatrix<S>>
+        + std::ops::Sub<DMatrix<S>, Output = DMatrix<S>>,
 {
     /// Creates a new Hextral neural network with the given parameters.
     pub fn new(qft: f64, laplace: f64) -> Self {
-        let h = DMatrix::from_fn(10, 10, |_, _| {
-            S::from_f64(rand::thread_rng().gen::<f64>() * 0.1).unwrap()
-        });
+        let h = DMatrix::from_fn(10, 10, |_, _| S::from_f64(rand::thread_rng().gen::<f64>() * 0.1).unwrap());
         Hextral { h, qft, laplace }
     }
 
@@ -54,7 +59,7 @@ where
 
         let output = match activation {
             ActivationFunction::Sigmoid => output.map(|x| x.sigmoid()),
-            ActivationFunction::ReLU => output.map(|x| x.max(S::zero())),
+            ActivationFunction::ReLU => output.map(|x| x.max(S::from_f64(0.0).unwrap())),
             ActivationFunction::Tanh => output.map(|x| x.tanh()),
         };
 
@@ -62,19 +67,12 @@ where
     }
 
     /// Trains the neural network using the provided inputs and targets.
-    pub fn train(
-        &mut self,
-        inputs: &[DVector<S>],
-        targets: &[DVector<S>],
-        learning_rate: f64,
-        regularization: Regularization,
-        epochs: usize,
-    ) {
+    pub fn train(&mut self, inputs: &[DVector<S>], targets: &[DVector<S>], learning_rate: f64, regularization: Regularization, epochs: usize) {
         for _ in 0..epochs {
             for (input, target) in inputs.iter().zip(targets.iter()) {
                 let output = self.forward_pass(input, ActivationFunction::Sigmoid);
-                let loss_gradient = output - target;
-                let gradients = &loss_gradient * input.transpose();
+                let loss_gradient = &output - target;
+                let gradients = loss_gradient.clone() * input.transpose();
 
                 self.update_parameters(learning_rate, &gradients, &regularization);
             }
@@ -91,25 +89,18 @@ where
         let mut total_loss = 0.0;
         for (input, target) in inputs.iter().zip(targets.iter()) {
             let output = self.predict(input);
-            let loss = (output - target).norm_squared(); // Use squared L2 loss
+            let loss = (&output - target).norm_squared(); // Use squared L2 loss
             total_loss += loss;
         }
         total_loss / inputs.len() as f64
     }
 
     /// Updates the parameters of the neural network using gradient descent and the specified learning rate and regularization.
-    pub fn update_parameters(
-        &mut self,
-        learning_rate: f64,
-        gradients: &DMatrix<S>,
-        regularization: &Regularization,
-    ) {
+    pub fn update_parameters(&mut self, learning_rate: f64, gradients: &DMatrix<S>, regularization: &Regularization) {
         let gradient_update = learning_rate * gradients;
 
         match regularization {
-            Regularization::L2(lambda) => {
-                self.h = &self.h - &gradient_update + *lambda * &self.h;
-            }
+            Regularization::L2(lambda) => self.h = &self.h - &gradient_update + *lambda * &self.h,
             Regularization::L1(lambda) => {
                 let signum = self.h.map(|x| x.signum());
                 self.h = &self.h - &gradient_update + *lambda * &signum;
@@ -118,16 +109,14 @@ where
     }
 
     /// Calculates the triangular integral of a vector.
-    pub fn triangular_integral(vector: &DVector<S>) -> f64 {
-        vector.iter().enumerate().fold(0.0, |acc, (i, &x)| {
-            acc + x.to_f64().unwrap() * ((i + 1) as f64)
-        })
+    pub fn triangular_integral(vector: &DVector<S>) -> S {
+        vector.iter().enumerate().fold(S::zero(), |acc, (i, &x)| acc + x * S::from_usize(i + 1).unwrap())
     }
 }
 
 fn main() {
     // Example usage of the Hextral neural network
-    let mut hextral = Hextral::<f64>::new(0.1, 0.2);
+    let mut hextral = Hextral::new(0.1, 0.2);
 
     // Generate more populated vectors for inputs and targets
     let num_samples = 1000;
