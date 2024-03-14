@@ -2,9 +2,8 @@ extern crate nalgebra;
 extern crate rand;
 extern crate num_traits;
 
-use nalgebra::{DVector, DMatrix, Scalar, ComplexField};
+use nalgebra::{DVector, DMatrix};
 use rand::Rng;
-use num_traits::{FromPrimitive, Float};
 
 /// Enumeration representing different activation functions that can be used in the neural network.
 #[derive(Debug, Clone, Copy)]
@@ -27,16 +26,16 @@ pub enum Regularization {
 }
 
 /// Struct representing a Hextral neural network.
-pub struct Hextral<S> {
+pub struct Hextral {
     /// Weight matrix representing the connections between neurons in the network.
-    h: DMatrix<S>,
+    h: DMatrix<f64>,
     /// Quantum Fourier Transform parameter.
     qft: f64,
     /// Laplace parameter.
     laplace: f64,
 }
 
-impl Hextral<f64> {
+impl Hextral {
     /// Creates a new Hextral neural network with the given parameters.
     pub fn new(qft: f64, laplace: f64) -> Self {
         let h = DMatrix::from_fn(10, 10, |_, _| rand::thread_rng().gen::<f64>() * 0.1);
@@ -48,7 +47,7 @@ impl Hextral<f64> {
         let output = &self.h * input;
 
         let output = match activation {
-            ActivationFunction::Sigmoid => output.map(|x| sigmoid(*x)),
+            ActivationFunction::Sigmoid => output.map(|x| sigmoid(x)),
             ActivationFunction::ReLU => output.map(|x| x.max(0.0)),
             ActivationFunction::Tanh => output.map(|x| x.tanh()),
         };
