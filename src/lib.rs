@@ -2,9 +2,9 @@ extern crate nalgebra;
 extern crate rand;
 extern crate num_traits;
 
-use nalgebra::{DVector, DMatrix, Scalar, ComplexField, Float};
+use nalgebra::{DVector, DMatrix, Scalar, ComplexField};
 use rand::Rng;
-use num_traits::FromPrimitive;
+use num_traits::FromPrimitive , Float;
 
 /// Enumeration representing different activation functions that can be used in the neural network.
 #[derive(Debug, Clone, Copy)]
