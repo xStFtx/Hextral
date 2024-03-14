@@ -9,6 +9,7 @@ use nalgebra::{DVector, DMatrix};
 use rand::Rng;
 
 /// Enumeration representing different activation functions that can be used in the neural network.
+#[derive(Debug, Clone, Copy)]
 pub enum ActivationFunction {
     /// Sigmoid activation function.
     Sigmoid,
@@ -19,6 +20,7 @@ pub enum ActivationFunction {
 }
 
 /// Enumeration representing different regularization techniques that can be applied during training.
+#[derive(Debug, Clone, Copy)]
 pub enum Regularization {
     /// L2 regularization with lambda parameter.
     L2(f64),
@@ -64,7 +66,7 @@ impl Hextral {
                 let loss_gradient = output - target;
                 let gradients = &loss_gradient * input.transpose();
 
-                self.update_parameters(learning_rate, &gradients, &regularization); // Pass regularization as reference
+                self.update_parameters(learning_rate, &gradients, &regularization);
             }
         }
     }
@@ -79,7 +81,7 @@ impl Hextral {
         let mut total_loss = 0.0;
         for (input, target) in inputs.iter().zip(targets.iter()) {
             let output = self.predict(input);
-            let loss = (output - target).norm(); // L2 loss
+            let loss = (output - target).norm_squared(); // Use squared L2 loss
             total_loss += loss;
         }
         total_loss / inputs.len() as f64
@@ -90,10 +92,10 @@ impl Hextral {
         let gradient_update = learning_rate * gradients;
 
         match regularization {
-            Regularization::L2(lambda) => self.h = &self.h - &gradient_update - *lambda * &self.h, // Dereference lambda
+            Regularization::L2(lambda) => self.h -= &gradient_update + lambda * &self.h,
             Regularization::L1(lambda) => {
                 let signum = self.h.map(|x| x.signum());
-                self.h = &self.h - &gradient_update - *lambda * &signum; // Dereference lambda
+                self.h -= &gradient_update + lambda * &signum;
             }
         }
     }
@@ -104,9 +106,8 @@ impl Hextral {
     }
 }
 
-
 fn main() {
-    //Example usage of the Hextral neural network
+    // Example usage of the Hextral neural network
     let mut hextral = Hextral::new(0.1, 0.2);
 
     // Generate more populated vectors for inputs and targets
