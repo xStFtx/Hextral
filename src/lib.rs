@@ -51,8 +51,8 @@ impl BatchNormalization {
             let sqrt_var = var.sqrt() + self.eps;
             let normalized = input.map(|x| (x - mean) / sqrt_var);
             let output = &self.gamma.component_mul(&normalized) + &self.beta;
-            self.running_mean = (0.9 * &self.running_mean) + (0.1 * mean);
-            self.running_var = (0.9 * &self.running_var) + (0.1 * var);
+            self.running_mean = (&self.running_mean * 0.9) + (mean * 0.1);
+            self.running_var = (&self.running_var * 0.9) + (var * 0.1);
             output
         } else {
             let normalized = input.map(|x| (x - &self.running_mean) / (&self.running_var.map(|x| x.sqrt()) + self.eps));
