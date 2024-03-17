@@ -1,7 +1,7 @@
 extern crate nalgebra;
 extern crate rand;
 
-use nalgebra::{DVector, DMatrix, DMatrixView, DMatrixViewMut};
+use nalgebra::{DVector, DMatrix};
 use rand::Rng;
 
 pub enum ActivationFunction {
@@ -46,25 +46,25 @@ impl BatchNormalization {
 
     pub fn forward(&mut self, input: &DVector<f64>, training: bool) -> DVector<f64> {
         if training {
-            let mean = input.sum() / input.len() as f64;
+            let mean = input.mean();
             let var = input.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (input.len() - 1) as f64;
             let sqrt_var = var.sqrt() + self.eps;
             let normalized = input.map(|x| (x - mean) / sqrt_var);
-            let output = &self.gamma * &normalized + &self.beta;
+            let output = &self.gamma.component_mul(&normalized) + &self.beta;
             self.running_mean = (0.9 * &self.running_mean) + (0.1 * mean);
             self.running_var = (0.9 * &self.running_var) + (0.1 * var);
             output
         } else {
-            let normalized = input.map(|x| (x - self.running_mean) / (self.running_var.sqrt() + self.eps));
-            &self.gamma * &normalized + &self.beta
+            let normalized = input.map(|x| (x - self.running_mean) / (self.running_var.map(|x| x.sqrt()) + self.eps));
+            &self.gamma.component_mul(&normalized) + &self.beta
         }
     }
 
     pub fn backward(&self, input: &DVector<f64>, grad_output: &DVector<f64>) -> DVector<f64> {
-        let normalized = input.map(|x| (x - self.running_mean) / (self.running_var.sqrt() + self.eps));
+        let normalized = input.map(|x| (x - self.running_mean) / (self.running_var.map(|x| x.sqrt()) + self.eps));
         let grad_gamma = grad_output.component_mul(&normalized);
         let grad_beta = grad_output.clone();
-        let grad_input = grad_output.component_mul(&(&self.gamma / (self.running_var.sqrt() + self.eps)));
+        let grad_input = grad_output.component_mul(&(&self.gamma / (self.running_var.map(|x| x.sqrt()) + self.eps)));
         grad_input
     }
 }
@@ -176,27 +176,28 @@ impl Hextral {
                         let (weight, _) = &self.layers[i];
                         let input = &outputs[i];
                         let (gw, gb) = &mut batch_grads[i];
-                        let (dw, db) = self.batch_norms[i].backward(input, &grad_output);
+                        let grad_input = self.batch_norms[i].backward(input, &grad_output);
                         *gw += &grad_output * input.transpose();
                         *gb += grad_output.clone();
-                        grads.push((dw, db));
+                        grads.push(grad_input);
                         grad_output = (weight.transpose() * &grad_output).component_mul(&match self.activation {
                             ActivationFunction::Sigmoid => input.map(|x| x * (1.0 - x)),
-                            ActivationFunction::ReLU => input.map(|&x| if x >= 0.0 { 1.0 } else { 0.0 }),
+                            ActivationFunction::ReLU => input.map(|x| if x >= 0.0 { 1.0 } else { 0.0 }),
                             ActivationFunction::Tanh => input.map(|x| 1.0 - x * x),
-                            ActivationFunction::LeakyReLU(alpha) => input.map(|&x| if x >= 0.0 { 1.0 } else { alpha }),
-                            ActivationFunction::ELU(alpha) => input.map(|&x| if x >= 0.0 { 1.0 } else { alpha * x.exp() }),
+                            ActivationFunction::LeakyReLU(alpha) => input.map(|x| if x >= 0.0 { 1.0 } else { alpha }),
+                            ActivationFunction::ELU(alpha) => input.map(|x| if x >= 0.0 { 1.0 } else { alpha * x.exp() }),
                         });
                     }
                     self.optimizer_state = batch_grads;
 
                     // Update weights and biases
-                    for ((weight, bias), (gw, gb), (dw, db)) in self.layers.iter_mut().zip(&mut self.optimizer_state).zip(grads.into_iter().rev()) {
-                        *weight -= learning_rate * (&gw / batch_size as f64 + match regularization {
+                    for ((weight, bias), (gw, gb)) in self.layers.iter_mut().zip(&mut self.optimizer_state) {
+                        let regularization_term = match regularization {
                             Regularization::L2(lambda) => 2.0 * lambda * weight,
-                            Regularization::L1(lambda) => lambda * weight.map(|x| if x >= 0.0 { 1.0 } else { -1.0 }),
+                            Regularization::L1(lambda) => weight.map(|x| if x >= 0.0 { lambda } else { -lambda }),
                             _ => DMatrix::zeros(weight.nrows(), weight.ncols()),
-                        });
+                        };
+                        *weight -= learning_rate * (&gw / batch_size as f64 + &regularization_term);
                         *bias -= learning_rate * &(&gb / batch_size as f64);
                     }
                 }
