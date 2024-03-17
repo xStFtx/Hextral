@@ -1,3 +1,5 @@
+use extern rand;
+
 use nalgebra::{DVector, DMatrix};
 use rand::Rng;
 
