@@ -26,8 +26,6 @@ pub enum Optimizer {
 }
 
 pub struct BatchNormalization {
-    gamma: DVector<f64>,
-    beta: DVector<f64>,
     running_mean: DVector<f64>,
     running_var: DVector<f64>,
     eps: f64,
@@ -36,8 +34,6 @@ pub struct BatchNormalization {
 impl BatchNormalization {
     pub fn new(size: usize, eps: f64) -> Self {
         BatchNormalization {
-            gamma: DVector::repeat(size, 1.0),
-            beta: DVector::zeros(size),
             running_mean: DVector::zeros(size),
             running_var: DVector::repeat(size, 1.0),
             eps,
@@ -50,13 +46,12 @@ impl BatchNormalization {
             let var = input.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (input.len() - 1) as f64;
             let sqrt_var = var.sqrt() + self.eps;
             let normalized = input.map(|x| (x - mean) / sqrt_var);
-            let output = &self.gamma.component_mul(&normalized) + &self.beta;
-            self.running_mean = (&self.running_mean * 0.9) + (mean * 0.1);
-            self.running_var = (&self.running_var * 0.9) + (var * 0.1);
-            output
+            self.running_mean = (&self.running_mean * 0.9) + (mean * 0.1); // Fixed
+            self.running_var = (&self.running_var * 0.9) + (var * 0.1); // Fixed
+            normalized.component_mul(&(self.running_var.map(|x| 1.0 / (x.sqrt() + self.eps)))) // Apply normalization
         } else {
             let normalized = input.map(|x| (x - &self.running_mean) / (&self.running_var.map(|x| x.sqrt()) + self.eps));
-            &self.gamma.component_mul(&normalized) + &self.beta
+            normalized
         }
     }
 
@@ -64,7 +59,7 @@ impl BatchNormalization {
         let normalized = input.map(|x| (x - &self.running_mean) / (&self.running_var.map(|x| x.sqrt()) + self.eps));
         let grad_gamma = grad_output.component_mul(&normalized);
         let grad_beta = grad_output.clone();
-        let grad_input = grad_output.component_mul(&(&self.gamma / (&self.running_var.map(|x| x.sqrt()) + self.eps)));
+        let grad_input = grad_output.component_mul(&(1.0 / (&self.running_var.map(|x| x.sqrt()) + self.eps)));
         grad_input
     }
 }
@@ -132,64 +127,62 @@ impl Hextral {
         output
     }
 
-    pub fn train(
-        &mut self,
-        inputs: &[DVector<f64>],
-        targets: &[DVector<f64>],
-        learning_rate: f64,
-        regularization: Regularization,
-        epochs: usize,
-        batch_size: usize,
-    ) {
-        for _ in 0..epochs {
-            for batch_start in (0..inputs.len()).step_by(batch_size) {
-                let batch_end = (batch_start + batch_size).min(inputs.len());
-                let batch_inputs = &inputs[batch_start..batch_end];
-                let batch_targets = &targets[batch_start..batch_end];
+    pub fn backward_pass(&mut self, input: &DVector<f64>, output: &DVector<f64>, target: &DVector<f64>) {
+        let mut grad_output = 2.0 * (output - target);
+        for i in (0..self.layers.len()).rev() {
+            let (weight, bias) = &mut self.layers[i];
+            let input_transpose = input.transpose();
+            let mut grad_weight = grad_output.clone() * input_transpose;
+            let grad_bias = grad_output.clone();
+            grad_output = weight.transpose() * &grad_output;
 
-                let mut batch_grads = self.optimizer_state.iter_mut().map(|(gw, gb)| (*gw, *gb)).collect::<Vec<_>>();
-                for (input, target) in batch_inputs.iter().zip(batch_targets.iter()) {
-                    let mut outputs = Vec::with_capacity(self.layers.len() + 1);
-                    outputs.push(input.clone());
+            let mut grad_input = self.batch_norms[i].backward(input, &grad_output);
 
-                    // Forward Pass
-                    let mut output = input.clone();
-                    for (i, (weight, bias)) in self.layers.iter().enumerate() {
-                        output = weight * &output + bias;
-                        if i < self.batch_norms.len() {
-                            output = self.batch_norms[i].forward(&output, true);
-                        }
-                        output = match self.activation {
-                            ActivationFunction::Sigmoid => output.map(|x| sigmoid(x)),
-                            ActivationFunction::ReLU => output.map(|x| x.max(0.0)),
-                            ActivationFunction::Tanh => output.map(|x| x.tanh()),
-                            ActivationFunction::LeakyReLU(alpha) => output.map(|x| if x >= 0.0 { x } else { alpha * x }),
-                            ActivationFunction::ELU(alpha) => output.map(|x| if x >= 0.0 { x } else { alpha * (x.exp() - 1.0) }),
-                        };
-                        outputs.push(output.clone());
-                    }
+            match self.activation {
+                ActivationFunction::Sigmoid => grad_input.component_mul_assign(&(output.map(|x| x * (1.0 - x)))),
+                ActivationFunction::ReLU => grad_input.component_mul_assign(&(input.map(|x| if x > 0.0 { 1.0 } else { 0.0 }))),
+                ActivationFunction::Tanh => grad_input.component_mul_assign(&(output.map(|x| 1.0 - x.powi(2)))),
+                ActivationFunction::LeakyReLU(alpha) => grad_input.component_mul_assign(&(input.map(|x| if x >= 0.0 { 1.0 } else { alpha }))),
+                ActivationFunction::ELU(alpha) => grad_input.component_mul_assign(&(input.map(|x| if x >= 0.0 { 1.0 } else { x.exp() + alpha }))),
+            };
 
-                    // Backward Pass
-                    let mut grad_output = cost_gradient(&output, target);
-                    for i in (0..self.layers.len()).rev() {
-                        let (gw, gb) = &mut batch_grads[i];
-                        let grad_input = self.batch_norms[i].backward(&outputs[i], &grad_output);
-                        *gw += grad_output.clone() * &outputs[i].transpose();
-                        *gb += grad_output.clone();
-                        grad_output = self.layers[i].0.transpose() * &grad_input;
-                    }
+            grad_weight /= input.len() as f64;
+            grad_bias /= input.len() as f64;
+
+            let (optimizer_weight, optimizer_bias) = &mut self.optimizer_state[i];
+            match self.optimizer {
+                Optimizer::SGD => {
+                    *weight -= grad_weight;
+                    *bias -= grad_bias;
                 }
-
-                // Update weights and biases
-                for ((weight, bias), (gw, gb)) in self.layers.iter_mut().zip(batch_grads.iter()) {
-                    *weight -= learning_rate * (gw + match regularization {
-                        Regularization::L2(lambda) => &*weight * lambda,
-                        Regularization::L1(_) => unimplemented!(), // not implemented yet
-                        Regularization::Dropout(_) => unimplemented!(), // not implemented yet
-                    });
-                    *bias -= learning_rate * gb;
+                Optimizer::SGDMomentum(momentum) => {
+                    *optimizer_weight *= momentum;
+                    *optimizer_weight += grad_weight;
+                    *weight -= optimizer_weight;
+                    *optimizer_bias *= momentum;
+                    *optimizer_bias += grad_bias;
+                    *bias -= optimizer_bias;
                 }
-                self.optimizer_state = batch_grads;
+                Optimizer::RMSProp(decay_rate, epsilon) => {
+                    *optimizer_weight *= decay_rate;
+                    *optimizer_weight += (1.0 - decay_rate) * grad_weight.component_mul(&grad_weight);
+                    *weight -= grad_weight.component_div(&(optimizer_weight.map(|x| x.sqrt() + epsilon)));
+                    *optimizer_bias *= decay_rate;
+                    *optimizer_bias += (1.0 - decay_rate) * grad_bias.component_mul(&grad_bias);
+                    *bias -= grad_bias.component_div(&(optimizer_bias.map(|x| x.sqrt() + epsilon)));
+                }
+                Optimizer::Adam(beta1, beta2) => {
+                    *optimizer_weight *= beta1;
+                    *optimizer_weight += (1.0 - beta1) * grad_weight;
+                    let mut corrected_weight = optimizer_weight.clone();
+                    corrected_weight /= (1.0 - beta1.powi(2)) as f64;
+                    *optimizer_bias *= beta1;
+                    *optimizer_bias += (1.0 - beta1) * grad_bias;
+                    let mut corrected_bias = optimizer_bias.clone();
+                    corrected_bias /= (1.0 - beta1.powi(2)) as f64;
+                    *weight -= corrected_weight.component_div(&(grad_weight.map(|x| x.abs().max(1e-8)) + epsilon));
+                    *bias -= corrected_bias.component_div(&(grad_bias.map(|x| x.abs().max(1e-8)) + epsilon));
+                }
             }
         }
     }
@@ -197,8 +190,4 @@ impl Hextral {
 
 fn sigmoid(x: f64) -> f64 {
     1.0 / (1.0 + (-x).exp())
-}
-
-fn cost_gradient(output: &DVector<f64>, target: &DVector<f64>) -> DVector<f64> {
-    output - target
 }
