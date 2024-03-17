@@ -184,7 +184,7 @@ impl Hextral {
                 for ((weight, bias), (gw, gb)) in self.layers.iter_mut().zip(batch_grads.iter()) {
                     *weight -= learning_rate * (gw + match regularization {
                         Regularization::L2(lambda) => weight * lambda,
-                        Regularization::L1(lambda) => unimplemented!(), // not implemented yet
+                        Regularization::L1(lambda) => DMatrix::from_element(weight.nrows(), weight.ncols(), lambda.signum()), // L1 regularization
                         Regularization::Dropout(_) => unimplemented!(), // not implemented yet
                     });
                     *bias -= learning_rate * gb;
