@@ -51,20 +51,20 @@ impl BatchNormalization {
             let sqrt_var = var.sqrt() + self.eps;
             let normalized = input.map(|x| (x - mean) / sqrt_var);
             let output = &self.gamma.component_mul(&normalized) + &self.beta;
-            self.running_mean = (0.9 * &self.running_mean) + (0.1 * mean);
-            self.running_var = (0.9 * &self.running_var) + (0.1 * var);
+            self.running_mean = (0.9 * &self.running_mean) + (0.1 * &mean);
+            self.running_var = (0.9 * &self.running_var) + (0.1 * &var);
             output
         } else {
-            let normalized = input.map(|x| (x - self.running_mean) / (self.running_var.map(|x| x.sqrt()) + self.eps));
+            let normalized = input.map(|x| (x - &self.running_mean) / (&self.running_var.map(|x| x.sqrt()) + self.eps));
             &self.gamma.component_mul(&normalized) + &self.beta
         }
     }
 
     pub fn backward(&self, input: &DVector<f64>, grad_output: &DVector<f64>) -> DVector<f64> {
-        let normalized = input.map(|x| (x - self.running_mean) / (self.running_var.map(|x| x.sqrt()) + self.eps));
+        let normalized = input.map(|x| (x - &self.running_mean) / (&self.running_var.map(|x| x.sqrt()) + self.eps));
         let grad_gamma = grad_output.component_mul(&normalized);
         let grad_beta = grad_output.clone();
-        let grad_input = grad_output.component_mul(&(&self.gamma / (self.running_var.map(|x| x.sqrt()) + self.eps)));
+        let grad_input = grad_output.component_mul(&(&self.gamma / (&self.running_var.map(|x| x.sqrt()) + self.eps)));
         grad_input
     }
 }
@@ -193,11 +193,11 @@ impl Hextral {
                     // Update weights and biases
                     for ((weight, bias), (gw, gb)) in self.layers.iter_mut().zip(&mut self.optimizer_state) {
                         let regularization_term = match regularization {
-                            Regularization::L2(lambda) => 2.0 * lambda * weight,
+                            Regularization::L2(lambda) => &(2.0 * lambda * weight),
                             Regularization::L1(lambda) => weight.map(|x| if x >= 0.0 { lambda } else { -lambda }),
-                            _ => DMatrix::zeros(weight.nrows(), weight.ncols()),
+                            _ => &DMatrix::zeros(weight.nrows(), weight.ncols()),
                         };
-                        *weight -= learning_rate * (&gw / batch_size as f64 + &regularization_term);
+                        *weight -= learning_rate * (&gw / batch_size as f64 + regularization_term);
                         *bias -= learning_rate * &(&gb / batch_size as f64);
                     }
                 }
