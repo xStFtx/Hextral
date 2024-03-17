@@ -1,6 +1,3 @@
-extern crate nalgebra;
-extern crate rand;
-
 use nalgebra::{DVector, DMatrix};
 use rand::Rng;
 
@@ -170,37 +167,26 @@ impl Hextral {
                     }
 
                     // Backward Pass
-                    let mut grads = Vec::with_capacity(self.layers.len());
-                    let mut grad_output = 2.0 * (outputs.last().unwrap() - target);
+                    let mut grad_output = cost_gradient(&output, target);
                     for i in (0..self.layers.len()).rev() {
-                        let (weight, _) = &self.layers[i];
-                        let input = &outputs[i];
                         let (gw, gb) = &mut batch_grads[i];
-                        let grad_input = self.batch_norms[i].backward(input, &grad_output);
-                        *gw += &grad_output * input.transpose();
+                        let grad_input = self.batch_norms[i].backward(&outputs[i], &grad_output);
+                        *gw += &grad_output * &outputs[i].transpose();
                         *gb += grad_output.clone();
-                        grads.push(grad_input);
-                        grad_output = (weight.transpose() * &grad_output).component_mul(&match self.activation {
-                            ActivationFunction::Sigmoid => input.map(|x| x * (1.0 - x)),
-                            ActivationFunction::ReLU => input.map(|x| if x >= 0.0 { 1.0 } else { 0.0 }),
-                            ActivationFunction::Tanh => input.map(|x| 1.0 - x * x),
-                            ActivationFunction::LeakyReLU(alpha) => input.map(|x| if x >= 0.0 { 1.0 } else { alpha }),
-                            ActivationFunction::ELU(alpha) => input.map(|x| if x >= 0.0 { 1.0 } else { alpha * x.exp() }),
-                        });
-                    }
-                    self.optimizer_state = batch_grads;
-
-                    // Update weights and biases
-                    for ((weight, bias), (gw, gb)) in self.layers.iter_mut().zip(&mut self.optimizer_state) {
-                        let regularization_term = match regularization {
-                            Regularization::L2(lambda) => &(2.0 * lambda * weight),
-                            Regularization::L1(lambda) => weight.map(|x| if x >= 0.0 { lambda } else { -lambda }),
-                            _ => &DMatrix::zeros(weight.nrows(), weight.ncols()),
-                        };
-                        *weight -= learning_rate * (&gw / batch_size as f64 + regularization_term);
-                        *bias -= learning_rate * &(&gb / batch_size as f64);
+                        grad_output = &self.layers[i].0.transpose() * &grad_input;
                     }
                 }
+
+                // Update weights and biases
+                for ((weight, bias), (gw, gb)) in self.layers.iter_mut().zip(batch_grads.iter()) {
+                    *weight -= learning_rate * (gw + match regularization {
+                        Regularization::L2(lambda) => weight * lambda,
+                        Regularization::L1(lambda) => unimplemented!(), // not implemented yet
+                        Regularization::Dropout(_) => unimplemented!(), // not implemented yet
+                    });
+                    *bias -= learning_rate * gb;
+                }
+                self.optimizer_state = batch_grads;
             }
         }
     }
@@ -208,4 +194,8 @@ impl Hextral {
 
 fn sigmoid(x: f64) -> f64 {
     1.0 / (1.0 + (-x).exp())
+}
+
+fn cost_gradient(output: &DVector<f64>, target: &DVector<f64>) -> DVector<f64> {
+    output - target
 }
