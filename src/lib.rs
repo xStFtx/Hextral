@@ -69,12 +69,17 @@ impl Hextral {
 
     pub fn update_parameters(&mut self, learning_rate: f64, gradients: &DMatrix<f64>, regularization: &Regularization) {
         let gradient_update = learning_rate * gradients;
-    
+
         match regularization {
-            Regularization::L2(lambda) => self.h = &(1.0 - learning_rate * *lambda) * &self.h - &gradient_update,
+            Regularization::L2(lambda) => {
+                self.h *= 1.0 - learning_rate * *lambda;
+                self.h -= &gradient_update;
+            }
             Regularization::L1(lambda) => {
                 let signum = self.h.map(|x| x.signum());
-                self.h = &(1.0 - learning_rate * *lambda) * &self.h - &gradient_update + learning_rate * *lambda * &signum;
+                self.h *= 1.0 - learning_rate * *lambda;
+                self.h -= &gradient_update;
+                self.h += learning_rate * *lambda * &signum;
             }
             Regularization::Dropout(rate) => {
                 let dropout_mask = DMatrix::from_fn(gradients.nrows(), gradients.ncols(), |_, _| {
@@ -88,7 +93,6 @@ impl Hextral {
             }
         }
     }
-    
 
     pub fn predict(&self, input: &DVector<f64>) -> DVector<f64> {
         self.forward_pass(input, ActivationFunction::Sigmoid)
