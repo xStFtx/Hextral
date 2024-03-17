@@ -51,8 +51,8 @@ impl BatchNormalization {
             let sqrt_var = var.sqrt() + self.eps;
             let normalized = input.map(|x| (x - mean) / sqrt_var);
             let output = &self.gamma.component_mul(&normalized) + &self.beta;
-            self.running_mean = (0.9 * &self.running_mean) + (0.1 * &mean);
-            self.running_var = (0.9 * &self.running_var) + (0.1 * &var);
+            self.running_mean = (0.9 * &self.running_mean) + (0.1 * mean);
+            self.running_var = (0.9 * &self.running_var) + (0.1 * var);
             output
         } else {
             let normalized = input.map(|x| (x - &self.running_mean) / (&self.running_var.map(|x| x.sqrt()) + self.eps));
@@ -174,17 +174,17 @@ impl Hextral {
                     for i in (0..self.layers.len()).rev() {
                         let (gw, gb) = &mut batch_grads[i];
                         let grad_input = self.batch_norms[i].backward(&outputs[i], &grad_output);
-                        *gw += &grad_output * &outputs[i].transpose();
+                        *gw += grad_output.clone() * &outputs[i].transpose();
                         *gb += grad_output.clone();
-                        grad_output = &self.layers[i].0.transpose() * &grad_input;
+                        grad_output = self.layers[i].0.transpose() * &grad_input;
                     }
                 }
 
                 // Update weights and biases
                 for ((weight, bias), (gw, gb)) in self.layers.iter_mut().zip(batch_grads.iter()) {
                     *weight -= learning_rate * (gw + match regularization {
-                        Regularization::L2(lambda) => weight * lambda,
-                        Regularization::L1(lambda) => DMatrix::from_element(weight.nrows(), weight.ncols(), lambda.signum()), // L1 regularization
+                        Regularization::L2(lambda) => &*weight * lambda,
+                        Regularization::L1(_) => unimplemented!(), // not implemented yet
                         Regularization::Dropout(_) => unimplemented!(), // not implemented yet
                     });
                     *bias -= learning_rate * gb;
