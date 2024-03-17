@@ -1,4 +1,5 @@
 extern crate rand;
+extern crate nalgebra;
 
 use nalgebra::{DVector, DMatrix};
 use rand::Rng;
