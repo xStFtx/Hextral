@@ -1,8 +1,8 @@
 [package]
 name = "hextral"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["xStFtx <noskillz.exe@gmail.com>"]
-description = "Advanced neural network library with batch normalization, multiple optimizers, and regularization techniques"
+description = "Comprehensive neural network library with batch normalization, 9 activation functions, 5 loss functions, multiple optimizers, and regularization"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/xStFtx/hextral"
 keywords = ["neural-network", "machine-learning", "deep-learning", "ai", "optimization"]
