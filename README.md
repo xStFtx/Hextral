@@ -1,6 +1,6 @@
 # Hextral
 
-A high-performance neural network library for Rust, featuring comprehensive support for multi-layer perceptrons with advanced optimization techniques, regularization methods, and flexible architecture design.
+A comprehensive neural network library for Rust with modern features including batch normalization, multiple loss functions, advanced activation functions, and flexible architecture design.
 
 [![Crates.io](https://img.shields.io/crates/v/hextral.svg)](https://crates.io/crates/hextral)
 [![Documentation](https://docs.rs/hextral/badge.svg)](https://docs.rs/hextral)
@@ -10,17 +10,27 @@ A high-performance neural network library for Rust, featuring comprehensive supp
 
 ### **Core Architecture**
 - **Multi-layer perceptrons** with configurable hidden layers
-- **Batch processing** for efficient training on large datasets
+- **Batch normalization** for improved training stability and convergence
 - **Xavier weight initialization** for stable gradient flow
 - **Flexible network topology** - specify any number of hidden layers and neurons
 
-### **Activation Functions**
-- **ReLU** - Rectified Linear Unit (default, good for most cases)
+### **Activation Functions (9 Available)**
+- **ReLU** - Rectified Linear Unit (good for most cases)
 - **Sigmoid** - Smooth activation for binary classification  
 - **Tanh** - Hyperbolic tangent for centered outputs
 - **Leaky ReLU** - Prevents dying ReLU problem
 - **ELU** - Exponential Linear Unit for smoother gradients
 - **Linear** - For regression output layers
+- **Swish** - Modern activation with smooth derivatives
+- **GELU** - Gaussian Error Linear Unit used in transformers
+- **Mish** - Self-regularizing activation function
+
+### **Loss Functions (5 Available)**
+- **Mean Squared Error (MSE)** - Standard regression loss
+- **Mean Absolute Error (MAE)** - Robust to outliers
+- **Binary Cross-Entropy** - Binary classification
+- **Categorical Cross-Entropy** - Multi-class classification
+- **Huber Loss** - Robust hybrid of MSE and MAE
 
 ### **Optimization Algorithms**
 - **Adam** - Adaptive moment estimation (recommended for most cases)
@@ -30,13 +40,14 @@ A high-performance neural network library for Rust, featuring comprehensive supp
 ### **Regularization Techniques**
 - **L2 Regularization** - Prevents overfitting by penalizing large weights
 - **L1 Regularization** - Encourages sparse networks and feature selection
-- **Dropout** - Randomly deactivates neurons during training to prevent co-adaptation
+- **Dropout** - Randomly deactivates neurons during training
 
 ### **Training & Evaluation**
+- **Flexible loss computation** with configurable loss functions
+- **Batch normalization** with training/inference modes
 - **Training progress tracking** with loss history
 - **Batch and single-sample prediction**
 - **Model evaluation** metrics and loss computation
-- **Architecture introspection** - query network structure and parameter count
 
 ## Quick Start
 
@@ -44,7 +55,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-hextral = "0.4.0"
+hextral = "0.5.1"
 nalgebra = "0.33"
 ```
 
@@ -93,6 +104,70 @@ fn main() {
     let final_loss = nn.evaluate(&inputs, &targets);
     println!("Final loss: {:.6}", final_loss);
 }
+```
+
+### Loss Functions
+
+Configure different loss functions for your specific task:
+
+```rust
+use hextral::{Hextral, LossFunction, ActivationFunction, Optimizer};
+
+let mut nn = Hextral::new(2, &[4], 1, ActivationFunction::ReLU, Optimizer::default());
+
+// For regression tasks
+nn.set_loss_function(LossFunction::MeanSquaredError);
+nn.set_loss_function(LossFunction::MeanAbsoluteError);
+nn.set_loss_function(LossFunction::Huber { delta: 1.0 });
+
+// For classification tasks
+nn.set_loss_function(LossFunction::BinaryCrossEntropy);
+nn.set_loss_function(LossFunction::CategoricalCrossEntropy);
+```
+
+### Batch Normalization
+
+Enable batch normalization for improved training stability:
+
+```rust
+use hextral::{Hextral, ActivationFunction, Optimizer};
+
+let mut nn = Hextral::new(10, &[64, 32], 1, ActivationFunction::ReLU, Optimizer::default());
+
+// Enable batch normalization
+nn.enable_batch_norm();
+
+// Set training mode
+nn.set_training_mode(true);
+
+// Train your network...
+let loss_history = nn.train(&inputs, &targets, 0.01, 100);
+
+// Switch to inference mode
+nn.set_training_mode(false);
+
+// Make predictions...
+let prediction = nn.predict(&input);
+```
+
+### Modern Activation Functions
+
+Use state-of-the-art activation functions:
+
+```rust
+use hextral::{Hextral, ActivationFunction, Optimizer};
+
+// Swish activation (used in EfficientNet)
+let mut nn = Hextral::new(2, &[4], 1, 
+    ActivationFunction::Swish { beta: 1.0 }, Optimizer::default());
+
+// GELU activation (used in BERT, GPT)
+let mut nn = Hextral::new(2, &[4], 1, 
+    ActivationFunction::GELU, Optimizer::default());
+
+// Mish activation (self-regularizing)
+let mut nn = Hextral::new(2, &[4], 1, 
+    ActivationFunction::Mish, Optimizer::default());
 ```
 
 
@@ -202,14 +277,21 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Changelog
 
-### v0.4.0 (Latest)
+### v0.5.1 (Latest)
+- **Improved Documentation**: Enhanced README with comprehensive examples of all new features
+- **Better Crates.io Presentation**: Updated documentation to properly showcase library capabilities
+
+### v0.5.0
+- **Major Feature Expansion**: Added comprehensive loss functions, batch normalization, and modern activation functions
+- **5 Loss Functions**: MSE, MAE, Binary Cross-Entropy, Categorical Cross-Entropy, Huber Loss
+- **Batch Normalization**: Full implementation with training/inference modes
+- **3 New Activation Functions**: Swish, GELU, Mish (total of 9 activation functions)
+- **Code Organization**: Separated tests into dedicated files for cleaner library structure
+- **Enhanced API**: Flexible loss function configuration and batch normalization controls
+
+### v0.4.0 (Previous)
 - **Complete rewrite** with proper error handling and fixed implementations
 - **Implemented all documented features** - train(), predict(), evaluate() methods
 - **Fixed critical bugs** in batch normalization and backward pass
 - **Added regularization support** - L1, L2, and Dropout
 - **Improved documentation** with usage examples and API reference
-
-### v0.3.5 (Previous)
-- Basic neural network functionality
-- Limited optimizer support
-- Minimal documentation
