@@ -1,12 +1,12 @@
 [package]
 name = "hextral"
-version = "0.5.1"
+version = "0.6.0"
 authors = ["xStFtx <noskillz.exe@gmail.com>"]
-description = "Comprehensive neural network library with batch normalization, 9 activation functions, 5 loss functions, multiple optimizers, and regularization"
+description = "Comprehensive neural network library with batch normalization, 9 activation functions, 5 loss functions, multiple optimizers, regularization, and full async/await support"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/xStFtx/hextral"
-keywords = ["neural-network", "machine-learning", "deep-learning", "ai", "optimization"]
-categories = ["algorithms", "mathematics", "science"]
+keywords = ["neural-network", "machine-learning", "deep-learning", "ai", "async"]
+categories = ["algorithms", "mathematics", "science", "asynchronous"]
 edition = "2021"
 readme = "README.md"
 
@@ -15,6 +15,11 @@ nalgebra = "0.33"
 rand = { version = "0.8", features = ["std_rng"] }
 num-traits = "0.2"
 serde = { version = "1.0", features = ["derive"], optional = true }
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3"
+
+[dev-dependencies]
+tokio-test = "0.4"
 
 [features]
 default = []

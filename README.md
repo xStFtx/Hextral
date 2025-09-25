@@ -1,6 +1,6 @@
 # Hextral
 
-A comprehensive neural network library for Rust with modern features including batch normalization, multiple loss functions, advanced activation functions, and flexible architecture design.
+A high-performance neural network library for Rust with comprehensive async/await support, advanced activation functions, multiple optimizers, and flexible architecture design.
 
 [![Crates.io](https://img.shields.io/crates/v/hextral.svg)](https://crates.io/crates/hextral)
 [![Documentation](https://docs.rs/hextral/badge.svg)](https://docs.rs/hextral)
@@ -13,6 +13,7 @@ A comprehensive neural network library for Rust with modern features including b
 - **Batch normalization** for improved training stability and convergence
 - **Xavier weight initialization** for stable gradient flow
 - **Flexible network topology** - specify any number of hidden layers and neurons
+- **Full async/await support** with intelligent yielding for non-blocking operations
 
 ### **Activation Functions (9 Available)**
 - **ReLU** - Rectified Linear Unit (good for most cases)
@@ -48,6 +49,14 @@ A comprehensive neural network library for Rust with modern features including b
 - **Training progress tracking** with loss history
 - **Batch and single-sample prediction**
 - **Model evaluation** metrics and loss computation
+- **Dual sync/async API** for both blocking and non-blocking operations
+
+### **Async/Concurrent Processing**
+- **Async training methods** with cooperative multitasking
+- **Parallel batch prediction** using futures
+- **Intelligent yielding** - only yields for large workloads (>1000 elements)
+- **Concurrent activation function processing**
+- **Performance-optimized** async implementation alongside synchronous methods
 
 ## Quick Start
 
@@ -55,8 +64,9 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-hextral = "0.5.1"
+hextral = "0.6.0"
 nalgebra = "0.33"
+tokio = { version = "1.0", features = ["full"] }  # For async features
 ```
 
 ### Basic Usage
@@ -105,6 +115,47 @@ fn main() {
     println!("Final loss: {:.6}", final_loss);
 }
 ```
+
+### Async Usage
+
+For high-performance applications requiring concurrent processing:
+
+```rust
+use hextral::{Hextral, ActivationFunction, Optimizer};
+use nalgebra::DVector;
+
+#[tokio::main]
+async fn main() {
+    // Create the same neural network
+    let mut nn = Hextral::new(
+        2, &[4, 3], 1,
+        ActivationFunction::ReLU,
+        Optimizer::Adam { learning_rate: 0.01 },
+    );
+
+    let inputs = vec![/* ... training data ... */];
+    let targets = vec![/* ... target data ... */];
+
+    // Async training with batch processing
+    let loss_history = nn.train_async(&inputs, &targets, 1.0, 100, Some(32)).await;
+
+    // Async batch predictions (parallel processing)
+    let predictions = nn.predict_batch_async(&inputs).await;
+    
+    // Async evaluation
+    let final_loss = nn.evaluate_async(&inputs, &targets).await;
+    
+    println!("Async training completed with final loss: {:.6}", final_loss);
+}
+```
+
+**Key Benefits of Async API:**
+
+- **Non-blocking operations** - Other tasks can run during training/inference
+- **Intelligent yielding** - Only yields for large workloads (>1000 elements or >10 batches)
+- **Better resource utilization** - Cooperative multitasking optimized for performance
+- **Scalable architecture** - Ideal for web services and concurrent applications
+- **Parallel batch processing** - Multiple predictions processed concurrently using futures
 
 ### Loss Functions
 
@@ -224,10 +275,6 @@ println!("Total parameters: {}", nn.parameter_count()); // 25
 let weights = nn.get_weights();
 nn.set_weights(weights);
 ```
-
-## API Reference
-```
-
 ## API Reference
 
 ### Core Types
@@ -277,11 +324,23 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Changelog
 
-### v0.5.1 (Latest)
+### v0.6.0 (Latest)
+
+- **Full Async/Await Support**: Complete async API alongside synchronous methods
+- **Intelligent Yielding**: Performance-optimized async with yielding only for large workloads (>1000 elements)
+- **Concurrent Processing**: Parallel batch predictions using futures and join_all
+- **Async Training**: Non-blocking training with cooperative multitasking
+- **Code Optimization**: Removed verbose AI-generated patterns, cleaner professional code
+- **Performance Improvements**: Smart async yielding prevents unnecessary overhead
+- **Enhanced Documentation**: Updated examples and API documentation
+
+### v0.5.1
+
 - **Improved Documentation**: Enhanced README with comprehensive examples of all new features
 - **Better Crates.io Presentation**: Updated documentation to properly showcase library capabilities
 
 ### v0.5.0
+
 - **Major Feature Expansion**: Added comprehensive loss functions, batch normalization, and modern activation functions
 - **5 Loss Functions**: MSE, MAE, Binary Cross-Entropy, Categorical Cross-Entropy, Huber Loss
 - **Batch Normalization**: Full implementation with training/inference modes
@@ -289,7 +348,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Code Organization**: Separated tests into dedicated files for cleaner library structure
 - **Enhanced API**: Flexible loss function configuration and batch normalization controls
 
-### v0.4.0 (Previous)
+### v0.4.0
+
 - **Complete rewrite** with proper error handling and fixed implementations
 - **Implemented all documented features** - train(), predict(), evaluate() methods
 - **Fixed critical bugs** in batch normalization and backward pass

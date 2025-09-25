@@ -1,55 +1,25 @@
-//! # Hextral
-//! 
-//! A neural network library with batch normalization, multiple optimizers, and activation functions.
+//! Neural network library with batch normalization and async support.
 
 use nalgebra::{DVector, DMatrix};
 use rand::{Rng, thread_rng};
 use rand::seq::SliceRandom;
+use futures::future::join_all;
 
-/// Activation functions available for the neural network
-#[derive(Debug, Clone)]
-pub enum ActivationFunction {
-    /// Sigmoid activation: f(x) = 1/(1+e^(-x))
-    Sigmoid,
-    /// ReLU activation: f(x) = max(0, x)
-    ReLU,
-    /// Tanh activation: f(x) = tanh(x)
-    Tanh,
-    /// Leaky ReLU activation: f(x) = max(αx, x)
-    LeakyReLU(f64),
-    /// ELU activation: f(x) = x if x ≥ 0, α(e^x - 1) if x < 0
-    ELU(f64),
-    /// Linear activation: f(x) = x
-    Linear,
-    /// Swish activation: f(x) = x * sigmoid(βx)
-    Swish { beta: f64 },
-    /// GELU activation: f(x) = 0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
-    GELU,
-    /// Mish activation: f(x) = x * tanh(softplus(x))
-    Mish,
-}
+mod activation;
+pub use activation::ActivationFunction;
 
-/// Regularization techniques
 #[derive(Debug, Clone)]
 pub enum Regularization {
-    /// L2 regularization (Ridge): λ * ||w||²
     L2(f64),
-    /// L1 regularization (Lasso): λ * ||w||₁
     L1(f64),
-    /// Dropout regularization
     Dropout(f64),
-    /// No regularization
     None,
 }
 
-/// Optimization algorithms
 #[derive(Debug, Clone)]
 pub enum Optimizer {
-    /// Stochastic Gradient Descent
     SGD { learning_rate: f64 },
-    /// SGD with momentum
     SGDMomentum { learning_rate: f64, momentum: f64 },
-    /// Adam optimizer (simplified)
     Adam { learning_rate: f64 },
 }
 
@@ -59,16 +29,11 @@ impl Default for Optimizer {
     }
 }
 
-/// Loss functions for training
 #[derive(Debug, Clone)]
 pub enum LossFunction {
-    /// Mean Squared Error: (1/2) * (y - ŷ)²
     MeanSquaredError,
-    /// Mean Absolute Error: |y - ŷ|
     MeanAbsoluteError,
-    /// Binary Cross Entropy: -(y*log(ŷ) + (1-y)*log(1-ŷ))
     BinaryCrossEntropy,
-    /// Categorical Cross Entropy: -Σ(y*log(ŷ))
     CategoricalCrossEntropy,
     /// Huber Loss: smooth combination of MSE and MAE
     Huber { delta: f64 },
@@ -80,31 +45,22 @@ impl Default for LossFunction {
     }
 }
 
-/// Batch normalization layer parameters
 #[derive(Debug, Clone)]
 pub struct BatchNormLayer {
-    /// Scale parameter (gamma)
     gamma: DVector<f64>,
-    /// Shift parameter (beta)  
     beta: DVector<f64>,
-    /// Running mean for inference
     running_mean: DVector<f64>,
-    /// Running variance for inference
     running_var: DVector<f64>,
-    /// Momentum for updating running statistics
     momentum: f64,
-    /// Small value for numerical stability
     epsilon: f64,
-    /// Whether we're in training mode
     training: bool,
 }
 
 impl BatchNormLayer {
-    /// Create a new batch normalization layer
     pub fn new(size: usize) -> Self {
         Self {
-            gamma: DVector::from_element(size, 1.0), // Initialize to 1
-            beta: DVector::zeros(size),               // Initialize to 0
+            gamma: DVector::from_element(size, 1.0),
+            beta: DVector::zeros(size),
             running_mean: DVector::zeros(size),
             running_var: DVector::from_element(size, 1.0),
             momentum: 0.1,
@@ -144,13 +100,12 @@ impl BatchNormLayer {
         }
     }
     
-    /// Set training mode
     pub fn set_training(&mut self, training: bool) {
         self.training = training;
     }
 }
 
-/// Main neural network struct
+#[derive(Clone)]
 pub struct Hextral {
     layers: Vec<(DMatrix<f64>, DVector<f64>)>,
     activation: ActivationFunction,
@@ -162,7 +117,6 @@ pub struct Hextral {
 }
 
 impl Hextral {
-    /// Creates a new neural network
     pub fn new(
         input_size: usize,
         hidden_sizes: &[usize],
@@ -246,109 +200,61 @@ impl Hextral {
         }
     }
 
-    /// Forward pass through the network
+    pub async fn forward_async(&self, input: &DVector<f64>) -> DVector<f64> {
+        // Only yield if network has many layers
+        if self.layers.len() > 5 {
+            let mid = self.layers.len() / 2;
+            let mut output = input.clone();
+            
+            for (i, (weight, bias)) in self.layers.iter().enumerate() {
+                output = weight * &output + bias;
+                if i < self.layers.len() - 1 {
+                    output = self.activation.apply(&output);
+                }
+                if i == mid {
+                    tokio::task::yield_now().await;
+                }
+            }
+            output
+        } else {
+            self.forward(input)
+        }
+    }
+
     pub fn forward(&self, input: &DVector<f64>) -> DVector<f64> {
         let mut output = input.clone();
         
         for (i, (weight, bias)) in self.layers.iter().enumerate() {
-            // Linear transformation
             output = weight * &output + bias;
-            
-            // Apply activation function (except for output layer in some cases)
             if i < self.layers.len() - 1 {
-                output = self.apply_activation(&output);
+                output = self.activation.apply(&output);
             }
         }
         
         output
     }
 
-    /// Apply activation function
-    fn apply_activation(&self, input: &DVector<f64>) -> DVector<f64> {
-        match &self.activation {
-            ActivationFunction::Sigmoid => input.map(|x| sigmoid(x)),
-            ActivationFunction::ReLU => input.map(|x| x.max(0.0)),
-            ActivationFunction::Tanh => input.map(|x| x.tanh()),
-            ActivationFunction::LeakyReLU(alpha) => {
-                input.map(|x| if x >= 0.0 { x } else { alpha * x })
-            },
-            ActivationFunction::ELU(alpha) => {
-                input.map(|x| if x >= 0.0 { x } else { alpha * (x.exp() - 1.0) })
-            },
-            ActivationFunction::Linear => input.clone(),
-            ActivationFunction::Swish { beta } => {
-                input.map(|x| x * sigmoid(beta * x))
-            },
-            ActivationFunction::GELU => {
-                input.map(|x| {
-                    0.5 * x * (1.0 + (std::f64::consts::SQRT_2 / std::f64::consts::PI).sqrt() 
-                        * (x + 0.044715 * x.powi(3)).tanh())
-                })
-            },
-            ActivationFunction::Mish => {
-                input.map(|x| x * (x.exp().ln_1p()).tanh()) // softplus(x) = ln(1 + exp(x))
-            },
-        }
+    pub async fn predict_async(&self, input: &DVector<f64>) -> DVector<f64> {
+        self.forward_async(input).await
     }
 
-    /// Apply derivative of activation function
-    fn apply_activation_derivative(&self, input: &DVector<f64>) -> DVector<f64> {
-        match &self.activation {
-            ActivationFunction::Sigmoid => {
-                input.map(|x| {
-                    let s = sigmoid(x);
-                    s * (1.0 - s)
-                })
-            },
-            ActivationFunction::ReLU => input.map(|x| if x > 0.0 { 1.0 } else { 0.0 }),
-            ActivationFunction::Tanh => input.map(|x| 1.0 - x.tanh().powi(2)),
-            ActivationFunction::LeakyReLU(alpha) => {
-                input.map(|x| if x >= 0.0 { 1.0 } else { *alpha })
-            },
-            ActivationFunction::ELU(alpha) => {
-                input.map(|x| if x >= 0.0 { 1.0 } else { alpha * x.exp() })
-            },
-            ActivationFunction::Linear => DVector::from_element(input.len(), 1.0),
-            ActivationFunction::Swish { beta } => {
-                input.map(|x| {
-                    let s = sigmoid(beta * x);
-                    s + beta * x * s * (1.0 - s)
-                })
-            },
-            ActivationFunction::GELU => {
-                input.map(|x| {
-                    let tanh_arg = (std::f64::consts::SQRT_2 / std::f64::consts::PI).sqrt() 
-                        * (x + 0.044715 * x.powi(3));
-                    let tanh_val = tanh_arg.tanh();
-                    let sech_sq = 1.0 - tanh_val.powi(2);
-                    
-                    0.5 * (1.0 + tanh_val) + 0.5 * x * sech_sq * 
-                    (std::f64::consts::SQRT_2 / std::f64::consts::PI).sqrt() * 
-                    (1.0 + 3.0 * 0.044715 * x.powi(2))
-                })
-            },
-            ActivationFunction::Mish => {
-                input.map(|x| {
-                    let softplus = x.exp().ln_1p();
-                    let tanh_softplus = softplus.tanh();
-                    let sigmoid_x = sigmoid(x);
-                    
-                    tanh_softplus + x * sigmoid_x * (1.0 - tanh_softplus.powi(2))
-                })
-            },
-        }
-    }
-
-    /// Single prediction
     pub fn predict(&self, input: &DVector<f64>) -> DVector<f64> {
         self.forward(input)
     }
 
-    /// Batch prediction
+    pub async fn predict_batch_async(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>> {
+        if inputs.len() > 10 {
+            let futures: Vec<_> = inputs.iter()
+                .map(|input| self.predict_async(input))
+                .collect();
+            join_all(futures).await
+        } else {
+            inputs.iter().map(|input| self.predict(input)).collect()
+        }
+    }
+
     pub fn predict_batch(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>> {
-        inputs.iter()
-            .map(|input| self.predict(input))
-            .collect()
+        inputs.iter().map(|input| self.predict(input)).collect()
     }
 
     /// Compute loss between prediction and target
@@ -435,7 +341,14 @@ impl Hextral {
         }
     }
 
-    /// Train the network for one step
+    pub async fn train_step_async(&mut self, input: &DVector<f64>, target: &DVector<f64>, learning_rate: f64) -> f64 {
+        let loss = self.train_step(input, target, learning_rate);
+        if self.layers.len() > 3 {
+            tokio::task::yield_now().await;
+        }
+        loss
+    }
+
     pub fn train_step(&mut self, input: &DVector<f64>, target: &DVector<f64>, learning_rate: f64) -> f64 {
         // Forward pass - collect activations
         let mut activations = vec![input.clone()];
@@ -444,7 +357,7 @@ impl Hextral {
         for (i, (weight, bias)) in self.layers.iter().enumerate() {
             current = weight * &current + bias;
             if i < self.layers.len() - 1 {
-                current = self.apply_activation(&current);
+                current = self.activation.apply(&current);
             }
             activations.push(current.clone());
         }
@@ -463,7 +376,7 @@ impl Hextral {
             
             // Apply activation derivative (except for output layer)
             if i < self.layers.len() - 1 {
-                let activation_grad = self.apply_activation_derivative(output_activation);
+                let activation_grad = self.activation.apply_derivative(output_activation);
                 delta = delta.component_mul(&activation_grad);
             }
             
@@ -505,7 +418,38 @@ impl Hextral {
         loss
     }
 
-    /// Train the network for multiple epochs
+    pub async fn train_async(
+        &mut self,
+        train_inputs: &[DVector<f64>],
+        train_targets: &[DVector<f64>],
+        learning_rate: f64,
+        epochs: usize,
+        batch_size: Option<usize>,
+    ) -> Vec<f64> {
+        let mut loss_history = Vec::new();
+        let batch_size = batch_size.unwrap_or(32);
+
+        for _epoch in 0..epochs {
+            let mut epoch_loss = 0.0;
+            let mut indices: Vec<usize> = (0..train_inputs.len()).collect();
+            indices.shuffle(&mut thread_rng());
+            
+            for batch in indices.chunks(batch_size) {
+                for &i in batch {
+                    epoch_loss += self.train_step_async(&train_inputs[i], &train_targets[i], learning_rate).await;
+                }
+                if batch_size > 10 {
+                    tokio::task::yield_now().await;
+                }
+            }
+            
+            let avg_loss = epoch_loss / train_inputs.len() as f64;
+            loss_history.push(avg_loss);
+        }
+
+        loss_history
+    }
+
     pub fn train(
         &mut self,
         train_inputs: &[DVector<f64>],
@@ -515,30 +459,36 @@ impl Hextral {
     ) -> Vec<f64> {
         let mut loss_history = Vec::new();
 
-        for epoch in 0..epochs {
+        for _ in 0..epochs {
             let mut epoch_loss = 0.0;
-            
-            // Shuffle data
             let mut indices: Vec<usize> = (0..train_inputs.len()).collect();
             indices.shuffle(&mut thread_rng());
             
             for &i in &indices {
-                let loss = self.train_step(&train_inputs[i], &train_targets[i], learning_rate);
-                epoch_loss += loss;
+                epoch_loss += self.train_step(&train_inputs[i], &train_targets[i], learning_rate);
             }
             
-            let avg_loss = epoch_loss / train_inputs.len() as f64;
-            loss_history.push(avg_loss);
-            
-            if epoch % 10 == 0 {
-                println!("Epoch {}: Average Loss = {:.6}", epoch, avg_loss);
-            }
+            loss_history.push(epoch_loss / train_inputs.len() as f64);
         }
 
         loss_history
     }
 
-    /// Evaluate the network on test data
+    /// Evaluate the network on test data (async version with parallel processing)
+    pub async fn evaluate_async(&self, test_inputs: &[DVector<f64>], test_targets: &[DVector<f64>]) -> f64 {
+        // Process predictions in parallel
+        let predictions = self.predict_batch_async(test_inputs).await;
+        
+        let mut total_loss = 0.0;
+        for (prediction, target) in predictions.iter().zip(test_targets.iter()) {
+            let loss = self.compute_loss(prediction, target);
+            total_loss += loss;
+        }
+
+        total_loss / test_inputs.len() as f64
+    }
+
+    /// Evaluate the network on test data (synchronous version)
     pub fn evaluate(&self, test_inputs: &[DVector<f64>], test_targets: &[DVector<f64>]) -> f64 {
         let mut total_loss = 0.0;
         
@@ -576,11 +526,6 @@ impl Hextral {
             self.layers = weights;
         }
     }
-}
-
-/// Helper function for sigmoid activation
-fn sigmoid(x: f64) -> f64 {
-    1.0 / (1.0 + (-x).exp())
 }
 
 #[cfg(test)]
