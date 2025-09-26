@@ -231,6 +231,18 @@ pub enum DatasetError {
     #[error("Data validation error: {0}")]
     Validation(String),
     
+    #[error("Memory allocation error: {0}")]
+    Memory(String),
+    
+    #[error("Data corruption detected: {0}")]
+    Corruption(String),
+    
+    #[error("Unsupported format: {0}")]
+    UnsupportedFormat(String),
+    
+    #[error("Schema mismatch: expected {expected}, found {actual}")]
+    SchemaMismatch { expected: String, actual: String },
+    
     #[cfg(feature = "datasets")]
     #[error("CSV error: {0}")]
     CsvError(String),
@@ -238,4 +250,42 @@ pub enum DatasetError {
     #[cfg(feature = "datasets")]
     #[error("Image error: {0}")]
     Image(#[from] ::image::ImageError),
+}
+
+impl DatasetError {
+    /// Check if this error is recoverable
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            DatasetError::Io(_) => true,
+            DatasetError::Parse(_) => false,
+            DatasetError::Configuration(_) => false,
+            DatasetError::Validation(_) => false,
+            DatasetError::Memory(_) => true,
+            DatasetError::Corruption(_) => false,
+            DatasetError::UnsupportedFormat(_) => false,
+            DatasetError::SchemaMismatch { .. } => false,
+            #[cfg(feature = "datasets")]
+            DatasetError::CsvError(_) => false,
+            #[cfg(feature = "datasets")]
+            DatasetError::Image(_) => false,
+        }
+    }
+
+    /// Get error severity level
+    pub fn severity(&self) -> crate::error::ErrorSeverity {
+        match self {
+            DatasetError::Io(_) => crate::error::ErrorSeverity::Warning,
+            DatasetError::Parse(_) => crate::error::ErrorSeverity::Error,
+            DatasetError::Configuration(_) => crate::error::ErrorSeverity::Critical,
+            DatasetError::Validation(_) => crate::error::ErrorSeverity::Error,
+            DatasetError::Memory(_) => crate::error::ErrorSeverity::Critical,
+            DatasetError::Corruption(_) => crate::error::ErrorSeverity::Critical,
+            DatasetError::UnsupportedFormat(_) => crate::error::ErrorSeverity::Error,
+            DatasetError::SchemaMismatch { .. } => crate::error::ErrorSeverity::Error,
+            #[cfg(feature = "datasets")]
+            DatasetError::CsvError(_) => crate::error::ErrorSeverity::Error,
+            #[cfg(feature = "datasets")]
+            DatasetError::Image(_) => crate::error::ErrorSeverity::Error,
+        }
+    }
 }

@@ -1,5 +1,5 @@
 use hextral::{
-    Hextral, ActivationFunction, Optimizer, 
+    Hextral, ActivationFunction, Optimizer, HextralResult,
     dataset::{
         image::{ImageLoader, LabelStrategy, AugmentationConfig},
     }
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use tokio::fs;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> HextralResult<()> {
     println!("Hextral Image Dataset Loading Example");
     println!("=====================================");
 

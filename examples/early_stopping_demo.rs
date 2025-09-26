@@ -2,7 +2,7 @@ use hextral::*;
 use nalgebra::DVector;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> HextralResult<()> {
     println!("Early Stopping and Checkpointing Demo");
     println!("===================================");
 

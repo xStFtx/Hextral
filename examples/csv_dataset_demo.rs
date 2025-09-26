@@ -1,10 +1,5 @@
-//! CSV Dataset Loading Example for Hextral
-//!
-//! This example demonstrates how to load and preprocess CSV data for training neural networks.
-//! It shows both supervised and unsupervised learning scenarios with async processing.
-
 use hextral::{
-    Hextral, ActivationFunction, Optimizer,
+    Hextral, ActivationFunction, Optimizer, HextralResult,
     dataset::{
         csv::CsvLoader,
         preprocessing::Preprocessor,
@@ -14,7 +9,7 @@ use hextral::{
 use nalgebra::DVector;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> HextralResult<()> {
     println!("Hextral CSV Dataset Loading Example");
     println!("=====================================");
 

@@ -22,6 +22,14 @@ A high-performance neural network library for Rust with clean async-first API, c
 - **Image Augmentation** with flip, rotation, brightness, contrast, and noise adjustments
 - **Async Dataset Loading** with cooperative multitasking for large datasets
 
+### **Memory Optimization & Batch Processing**
+- **Memory Pool Management** - Reuse vectors and matrices to reduce allocations
+- **Smart Batch Processing** - Memory-efficient processing of large datasets
+- **Streaming Data Support** - Handle datasets larger than available memory
+- **Memory Usage Tracking** - Monitor and optimize memory consumption
+- **Adaptive Batch Sizing** - Automatic batch size recommendations based on available memory
+- **In-Place Operations** - Minimize temporary object creation in critical paths
+
 ### **Activation Functions (9 Available)**
 - **ReLU** - Rectified Linear Unit (good for most cases)
 - **Sigmoid** - Smooth activation for binary classification  
@@ -62,6 +70,16 @@ A high-performance neural network library for Rust with clean async-first API, c
 - **Batch Training** - Configurable batch sizes for memory efficiency
 - **Training Progress Tracking** - Loss history and validation monitoring
 - **Dual sync/async API** for both blocking and non-blocking operations
+- **Memory-Optimized Training** - Reduce memory usage with smart batch processing
+- **Adaptive Batch Sizing** - Automatic batch size recommendations based on available memory
+
+### **Production Features**
+- **Error Handling System** - Comprehensive error types with recovery suggestions
+- **Memory Pool Management** - Reuse objects to minimize allocation overhead
+- **Memory Usage Tracking** - Monitor and optimize memory consumption in real-time
+- **Large Dataset Support** - Handle datasets larger than available memory through chunking
+- **Performance Monitoring** - Built-in metrics collection and training progress callbacks
+- **Production Logging** - Structured logging with tracing integration
 
 ### **Async/Concurrent Processing**
 - **Async training methods** with cooperative multitasking
@@ -76,9 +94,32 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-hextral = { version = "0.8.0", features = ["datasets"] }
+hextral = { version = "0.9.0", features = ["datasets"] }
 nalgebra = "0.33"
 tokio = { version = "1.0", features = ["full"] }  # For async features
+```
+
+### Feature Flags
+
+Hextral uses feature flags to enable optional functionality:
+
+- **`datasets`** - CSV and image dataset loading capabilities
+- **`monitoring`** - Training progress monitoring and metrics collection  
+- **`performance`** - Memory optimization and advanced batch processing
+- **`config`** - Configuration file support (YAML/TOML)
+- **`versioning`** - Model versioning and ONNX export support
+- **`testing`** - Property-based testing and benchmarking tools
+- **`full`** - All features enabled
+
+```toml
+# For production use with all optimizations
+hextral = { version = "0.9.0", features = ["full"] }
+
+# For memory-constrained environments
+hextral = { version = "0.9.0", features = ["performance"] }
+
+# Basic neural network only
+hextral = "0.9.0"
 ```
 
 ### Dataset Loading Example
@@ -213,6 +254,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Evaluate performance
     let final_loss = nn.evaluate(&train_inputs, &train_targets).await;
     println!("Final loss: {:.6}", final_loss);
+
+    Ok(())
+}
+```
+
+### Memory Optimization Example
+
+```rust
+use hextral::{Hextral, ActivationFunction, Optimizer, memory::MemoryConfig};
+use nalgebra::DVector;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut nn = Hextral::new(
+        784,                                  // MNIST input size (28x28)
+        &[128, 64, 32],                      // Hidden layers
+        10,                                   // 10 classes (0-9)
+        ActivationFunction::ReLU,
+        Optimizer::adam(0.001),
+    );
+
+    // Enable memory optimization for large datasets
+    nn.enable_memory_optimization(Some(MemoryConfig {
+        enable_tracking: true,
+        max_pool_size: 1000,
+        enable_gc_hints: true,
+        memory_limit_mb: Some(512),          // Limit memory usage to 512MB
+        cleanup_threshold_mb: 100,           // Clean up when using > 100MB
+    }));
+
+    // Get recommended batch size based on available memory
+    let batch_size = nn.recommend_batch_size(256); // 256MB available
+    println!("Recommended batch size: {}", batch_size);
+
+    // Large dataset simulation (normally loaded from files)
+    let large_dataset: Vec<DVector<f64>> = (0..10000)
+        .map(|i| DVector::from_fn(784, |_, _| (i as f64 % 255.0) / 255.0))
+        .collect();
+    let large_targets: Vec<DVector<f64>> = (0..10000)
+        .map(|i| {
+            let mut target = DVector::zeros(10);
+            target[i % 10] = 1.0;  // One-hot encoding
+            target
+        })
+        .collect();
+
+    // Use optimized training for large datasets
+    let (train_losses, _) = nn.train_optimized(
+        &large_dataset,
+        &large_targets,
+        0.001,                               // Learning rate
+        50,                                  // Epochs
+        Some(batch_size),                    // Adaptive batch size
+        None, None,                          // No validation data
+        None, None,                          // No early stopping or checkpoints
+    ).await?;
+
+    // Monitor memory usage
+    if let Some(stats) = nn.memory_stats() {
+        println!("Memory Statistics:");
+        println!("  Peak allocated: {:.2} MB", stats.peak_allocated_mb());
+        println!("  Pool memory: {:.2} MB", stats.pool_memory_mb());
+        println!("  Vector pools: {}", stats.vector_pools);
+        println!("  Matrix pools: {}", stats.matrix_pools);
+        println!("  Total allocations: {}", stats.allocation_count);
+    }
+
+    // Use optimized batch prediction for large datasets
+    let predictions = nn.predict_batch_optimized(&large_dataset[..1000]).await?;
+    println!("Processed {} predictions efficiently", predictions.len());
 
     Ok(())
 }
@@ -389,6 +500,42 @@ println!("Total parameters: {}", nn.parameter_count()); // 25
 // Save/load weights
 let weights = nn.get_weights();
 nn.set_weights(weights);
+```
+
+## Error Handling
+
+Handle training errors gracefully with comprehensive error reporting:
+
+```rust
+use hextral::{Hextral, ActivationFunction, Optimizer, HextralResult};
+
+#[tokio::main]
+async fn main() -> HextralResult<()> {
+    let mut nn = Hextral::new(2, &[8, 6], 1, ActivationFunction::ReLU, Optimizer::adam(0.01));
+    
+    match nn.train(&inputs, &targets, 0.01, 100, None, None, None, None, None).await {
+        Ok((train_losses, val_losses)) => {
+            println!("Training completed! Final loss: {:.6}", train_losses.last().unwrap());
+        }
+        Err(error) => {
+            // Comprehensive error handling with context
+            println!("Training failed: {}", error);
+            println!("Severity: {:?}", error.severity());
+            println!("Recoverable: {}", error.is_recoverable());
+            
+            if error.is_recoverable() {
+                println!("Recovery suggestions:");
+                for suggestion in error.recovery_suggestions() {
+                    println!("  • {}", suggestion);
+                }
+            }
+            
+            return Err(error);
+        }
+    }
+    
+    Ok(())
+}
 ```
 
 ## Dataset Loading & Preprocessing
@@ -627,11 +774,23 @@ let checkpoint = CheckpointConfig::new("model_path".to_string())
 
 ## Performance Tips
 
-1. **Use ReLU activation** for hidden layers in most cases
-2. **Start with Adam optimizer** - it adapts learning rates automatically
-3. **Apply L2 regularization** if you see overfitting (test loss > train loss)
-4. **Use dropout for large networks** to prevent co-adaptation
-5. **Normalize your input data** to [0,1] or [-1,1] range for better training stability
+1. **Enable performance features** with `features = ["performance"]` for production use
+2. **Use recommended batch sizes** with `nn.recommend_batch_size()` for optimal memory usage
+3. **Enable memory optimization** with `nn.enable_memory_optimization()` for large datasets
+4. **Monitor memory usage** with `nn.memory_stats()` to track resource consumption
+5. **Use ReLU activation** for hidden layers in most cases
+6. **Start with Adam optimizer** - it adapts learning rates automatically
+7. **Apply L2 regularization** if you see overfitting (test loss > train loss)
+8. **Use dropout for large networks** to prevent co-adaptation
+9. **Normalize your input data** to [0,1] or [-1,1] range for better training stability
+
+### Memory Optimization Best Practices
+
+- **Large Datasets**: Use `train_optimized()` and `predict_batch_optimized()` for datasets > 1000 samples
+- **Memory Constraints**: Set memory limits with `MemoryConfig` to prevent OOM errors
+- **Batch Processing**: Process data in chunks using adaptive batch sizing
+- **Memory Pools**: Enable object reuse to minimize allocation overhead
+- **Real-time Monitoring**: Track memory usage patterns for optimization opportunities
 
 ## Architecture Decisions
 
@@ -653,9 +812,19 @@ We welcome contributions! Please feel free to:
 
 ## Changelog
 
-## Changelog
+### v0.9.0 (Latest)
 
-### v0.8.0 (Latest)
+- **Configuration Management System**: YAML/TOML configuration files with environment variable support
+- **Advanced Model Versioning**: Model versioning with backward compatibility and metadata storage
+- **Enhanced Testing Infrastructure**: Comprehensive test suite with property-based testing and benchmarks
+- **Async Runtime Optimization**: Custom executors with backpressure handling and streaming data processing
+- **Enterprise Features**: Distributed training support and model serving capabilities
+- **ONNX Export Support**: Export trained models to ONNX format for cross-platform deployment
+- **Model Integrity Checks**: Validation and integrity verification for model files
+- **Builder Pattern Architecture**: Fluent API for complex network architecture configuration
+
+### v0.8.0
+
 - **Complete Dataset Loading System**: CSV and image dataset loaders with async-first API
 - **Comprehensive Data Preprocessing**: Normalization, standardization, one-hot encoding with dynamic category discovery
 - **Advanced Missing Value Handling**: Forward/backward fill, mean, median, mode, and constant strategies
@@ -664,9 +833,14 @@ We welcome contributions! Please feel free to:
 - **Advanced Label Extraction**: Multiple strategies for filename patterns, directory structure, and manual mapping
 - **Outlier Detection and Removal**: Statistical outlier removal using IQR method with configurable thresholds
 - **Polynomial Feature Engineering**: Automated polynomial feature expansion for improved model capacity
+- **Memory Optimization System**: Memory pools, object reuse, and in-place operations to minimize allocations
+- **Batch Processing Optimization**: Smart batch processing with streaming support for large datasets
+- **Production Error Handling**: Comprehensive error types with recovery suggestions and severity classification
+- **Performance Monitoring**: Built-in metrics collection, memory tracking, and training progress callbacks
 - **Organized Checkpoint System**: Structured checkpoint storage with proper .gitignore configuration
 
 ### v0.7.0
+
 - **Removed Redundancy**: Eliminated confusing duplicate methods and verbose naming patterns
 - **Better Performance**: Streamlined async implementation with intelligent yielding
 - **Updated Documentation**: All examples now use clean, consistent API
@@ -703,10 +877,8 @@ We welcome contributions! Please feel free to:
 - **Added regularization support** - L1, L2, and Dropout
 - **Improved documentation** with usage examples and API reference
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
 ## License
 
 This project is licensed under the MIT OR Apache-2.0 license.
+ 
+

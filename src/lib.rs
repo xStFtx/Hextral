@@ -8,12 +8,35 @@ use tokio::fs;
 
 pub mod activation;
 pub mod optimizer;
+pub mod error;
+
+#[cfg(feature = "performance")]
+pub mod batch;
+
+#[cfg(feature = "performance")]
+pub mod memory;
+
+#[cfg(feature = "monitoring")]
+pub mod monitoring;
 
 #[cfg(feature = "datasets")]
 pub mod dataset;
 
 pub use activation::ActivationFunction;
 pub use optimizer::{Optimizer, OptimizerState};
+pub use error::{HextralError, HextralResult, ErrorSeverity, TrainingContext, ContextualError};
+
+#[cfg(feature = "performance")]
+pub use batch::{BatchIterator, BatchProcessor, MemoryPool, BatchStats, DataStream};
+
+#[cfg(feature = "performance")]
+pub use memory::{MemoryManager, MemoryConfig, MemoryStats, GradientStorage, ActivationStorage};
+
+#[cfg(feature = "monitoring")]
+pub use monitoring::{
+    TrainingMonitor, ProgressCallback, EpochMetrics, TrainingResult, 
+    PerformanceProfiler, ConsoleProgressCallback
+};
 
 #[cfg(feature = "datasets")]
 pub use dataset::{Dataset, DatasetLoader, DatasetError, PreprocessingConfig, FillStrategy};
@@ -78,13 +101,13 @@ impl CheckpointConfig {
         self
     }
     
-    pub async fn save_weights(&self, weights: &[(DMatrix<f64>, DVector<f64>)]) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn save_weights(&self, weights: &[(DMatrix<f64>, DVector<f64>)]) -> HextralResult<()> {
         let data = bincode::serialize(weights)?;
         fs::write(&self.filepath, data).await?;
         Ok(())
     }
     
-    pub async fn load_weights(&self) -> Result<Vec<(DMatrix<f64>, DVector<f64>)>, Box<dyn std::error::Error>> {
+    pub async fn load_weights(&self) -> HextralResult<Vec<(DMatrix<f64>, DVector<f64>)>> {
         let data = fs::read(&self.filepath).await?;
         let weights = bincode::deserialize(&data)?;
         Ok(weights)
@@ -185,6 +208,14 @@ pub struct Hextral {
     loss_function: LossFunction,
     batch_norm_layers: Vec<Option<BatchNormLayer>>,
     use_batch_norm: bool,
+    
+    #[cfg(feature = "performance")]
+    #[serde(skip)]
+    memory_manager: Option<crate::memory::MemoryManager>,
+    
+    #[cfg(feature = "performance")]
+    #[serde(skip)]
+    batch_processor: Option<crate::batch::BatchProcessor>,
 }
 
 impl Hextral {
@@ -233,6 +264,12 @@ impl Hextral {
             loss_function: LossFunction::default(),
             batch_norm_layers: Vec::new(),
             use_batch_norm: false,
+            
+            #[cfg(feature = "performance")]
+            memory_manager: None,
+            
+            #[cfg(feature = "performance")]
+            batch_processor: None,
         }
     }
 
@@ -246,7 +283,38 @@ impl Hextral {
         self.loss_function = loss;
     }
     
-    /// Enable batch normalization for all hidden layers
+    /// Enable memory management optimizations
+    #[cfg(feature = "performance")]
+    pub fn enable_memory_optimization(&mut self, config: Option<crate::memory::MemoryConfig>) {
+        let config = config.unwrap_or_default();
+        self.memory_manager = Some(crate::memory::MemoryManager::new(config));
+        self.batch_processor = Some(crate::batch::BatchProcessor::new(1000, 128));
+    }
+    
+    /// Disable memory optimizations
+    #[cfg(feature = "performance")]
+    pub fn disable_memory_optimization(&mut self) {
+        self.memory_manager = None;
+        self.batch_processor = None;
+    }
+    
+    /// Get memory statistics
+    #[cfg(feature = "performance")]
+    pub fn memory_stats(&self) -> Option<crate::memory::MemoryStats> {
+        self.memory_manager.as_ref().map(|mm| mm.memory_stats())
+    }
+    
+    /// Recommend optimal batch size based on model and memory constraints
+    #[cfg(feature = "performance")]
+    pub fn recommend_batch_size(&self, available_memory_mb: usize) -> usize {
+        if let Some(processor) = &self.batch_processor {
+            let input_size = self.layers[0].0.ncols();
+            let param_count = self.parameter_count();
+            processor.recommend_batch_size(input_size, available_memory_mb, param_count)
+        } else {
+            32 // Default batch size
+        }
+    }
     pub fn enable_batch_norm(&mut self) {
         if !self.use_batch_norm {
             self.use_batch_norm = true;
@@ -322,6 +390,31 @@ impl Hextral {
             }
             results
         }
+    }
+    
+    /// Optimized batch prediction with memory management
+    #[cfg(feature = "performance")]
+    pub async fn predict_batch_optimized(&mut self, inputs: &[DVector<f64>]) -> HextralResult<Vec<DVector<f64>>> {
+        if self.batch_processor.is_none() {
+            self.enable_memory_optimization(None);
+        }
+        
+        let chunk_size = self.recommend_batch_size(256).min(inputs.len());
+        let mut results = Vec::with_capacity(inputs.len());
+        
+        for chunk in inputs.chunks(chunk_size) {
+            for input in chunk {
+                let prediction = self.predict(input).await;
+                results.push(prediction);
+            }
+            
+            // Yield for large chunks
+            if chunk_size > 50 {
+                tokio::task::yield_now().await;
+            }
+        }
+        
+        Ok(results)
     }
 
     /// Compute loss between prediction and target
@@ -479,6 +572,141 @@ impl Hextral {
         loss
     }
 
+    /// Optimized training method with memory management and batch processing
+    #[cfg(feature = "performance")]
+    pub async fn train_optimized(
+        &mut self,
+        train_inputs: &[DVector<f64>],
+        train_targets: &[DVector<f64>],
+        learning_rate: f64,
+        epochs: usize,
+        batch_size: Option<usize>,
+        val_inputs: Option<&[DVector<f64>]>,
+        val_targets: Option<&[DVector<f64>]>,
+        early_stopping: Option<EarlyStopping>,
+        checkpoint_config: Option<CheckpointConfig>,
+    ) -> HextralResult<(Vec<f64>, Vec<f64>)> {
+        // Initialize performance optimizations if not already done
+        if self.batch_processor.is_none() {
+            self.enable_memory_optimization(None);
+        }
+        
+        let mut train_loss_history = Vec::new();
+        let mut val_loss_history = Vec::new();
+        let mut early_stop = early_stopping;
+        let mut best_val_loss = f64::INFINITY;
+        
+        let effective_batch_size = batch_size.unwrap_or_else(|| {
+            self.recommend_batch_size(512) // Assume 512MB available
+        });
+
+        for epoch in 0..epochs {
+            let mut epoch_loss = 0.0;
+            let mut indices: Vec<usize> = (0..train_inputs.len()).collect();
+            indices.shuffle(&mut rand::thread_rng());
+            
+            // Process batches
+            for batch_indices in indices.chunks(effective_batch_size) {
+                let mut batch_loss = 0.0;
+                
+                // Process each sample in the batch
+                for &i in batch_indices {
+                    batch_loss += self.train_step(&train_inputs[i], &train_targets[i], learning_rate).await;
+                }
+                
+                epoch_loss += batch_loss;
+                
+                // Yield for large batches
+                if effective_batch_size > 50 {
+                    tokio::task::yield_now().await;
+                }
+            }
+            
+            let train_loss = epoch_loss / train_inputs.len() as f64;
+            train_loss_history.push(train_loss);
+
+            // Validation phase
+            let val_loss = if let (Some(val_inputs), Some(val_targets)) = (val_inputs, val_targets) {
+                self.evaluate_optimized(val_inputs, val_targets).await?
+            } else {
+                train_loss
+            };
+            val_loss_history.push(val_loss);
+
+            // Checkpoint management
+            if let Some(ref config) = checkpoint_config {
+                let should_save_best = config.save_best && val_loss < best_val_loss;
+                let should_save_periodic = config.save_every.map_or(false, |freq| (epoch + 1) % freq == 0);
+                
+                if should_save_best {
+                    best_val_loss = val_loss;
+                    config.save_weights(&self.layers).await?;
+                }
+                
+                if should_save_periodic {
+                    let periodic_path = format!("{}_epoch_{}", config.filepath, epoch + 1);
+                    let periodic_config = CheckpointConfig::new(&periodic_path);
+                    periodic_config.save_weights(&self.layers).await?;
+                }
+            }
+
+            // Early stopping check
+            if let Some(ref mut early_stop) = early_stop {
+                if early_stop.should_stop(val_loss) {
+                    if early_stop.restore_best_weights {
+                        if let Some(ref config) = checkpoint_config {
+                            if config.save_best {
+                                match config.load_weights().await {
+                                    Ok(weights) => self.set_weights(weights),
+                                    Err(_) => {} // Continue with current weights if loading fails
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            // Memory cleanup every 10 epochs
+            if epoch % 10 == 0 {
+                if let Some(processor) = &mut self.batch_processor {
+                    processor.clear_memory_pool();
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+
+        Ok((train_loss_history, val_loss_history))
+    }
+    
+    /// Optimized evaluation method
+    #[cfg(feature = "performance")]
+    pub async fn evaluate_optimized(&mut self, test_inputs: &[DVector<f64>], test_targets: &[DVector<f64>]) -> HextralResult<f64> {
+        if self.batch_processor.is_none() {
+            self.enable_memory_optimization(None);
+        }
+        
+        let chunk_size = self.recommend_batch_size(256).min(test_inputs.len());
+        let mut total_loss = 0.0;
+        
+        for chunk in test_inputs.chunks(chunk_size) {
+            let chunk_targets = &test_targets[..chunk.len()];
+            
+            for (input, target) in chunk.iter().zip(chunk_targets.iter()) {
+                let prediction = self.predict(input).await;
+                let loss = self.compute_loss(&prediction, target);
+                total_loss += loss;
+            }
+            
+            // Yield for large chunks
+            if chunk_size > 50 {
+                tokio::task::yield_now().await;
+            }
+        }
+        
+        Ok(total_loss / test_inputs.len() as f64)
+    }
+
     /// Full async training method with early stopping and checkpoints
     pub async fn train(
         &mut self,
@@ -491,7 +719,7 @@ impl Hextral {
         val_targets: Option<&[DVector<f64>]>,
         early_stopping: Option<EarlyStopping>,
         checkpoint_config: Option<CheckpointConfig>,
-    ) -> Result<(Vec<f64>, Vec<f64>), Box<dyn std::error::Error>> {
+    ) -> HextralResult<(Vec<f64>, Vec<f64>)> {
         let mut train_loss_history = Vec::new();
         let mut val_loss_history = Vec::new();
         let mut early_stop = early_stopping;
