@@ -1,6 +1,6 @@
 [package]
 name = "hextral"
-version = "0.7.0"
+version = "0.7.1"
 authors = ["xStFtx <noskillz.exe@gmail.com>"]
 description = "Comprehensive neural network library with batch normalization, 9 activation functions, 5 loss functions, multiple optimizers, regularization, and clean async-first API"
 license = "MIT OR Apache-2.0"
