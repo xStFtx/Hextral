@@ -7,10 +7,14 @@
 - [x] ~~Multithreading/Async~~ (v0.6.0) **Complete async/await support with intelligent yielding**
 
 ## Data
-- [ ] Add CSV , images and other datasets support
+- [x] ~~Add CSV , images and other datasets support~~ (v0.8.0) **Complete dataset loading system with CSV, image, preprocessing, and PCA**
+- [x] ~~Data Preprocessing Pipeline~~ (v0.8.0) **Normalization, standardization, one-hot encoding, missing values, outlier removal**
+- [x] ~~Data Augmentation~~ (v0.8.0) **Image augmentation: flip, rotation, brightness, contrast, noise**
+- [x] ~~Missing Value Handling~~ (v0.8.0) **Forward/backward fill, mean, median, mode, constant strategies**
 - [ ] Cross-Validation
-- [ ] Data Augmentation
 - [ ] Better Metrics (Accuracy, recall , F1, Confusion Matrix)
+- [ ] Time Series Dataset Support
+- [ ] Text/NLP Dataset Support
 
 ## Training
 - [x] ~~Early Stopping~~ (v0.7.0) **Early stopping with patience, validation loss monitoring**
@@ -52,6 +56,18 @@
 - [ ] Transfer Learning
 - [ ] AutoML
 - [ ] Federated Learning
+
+## Recently Completed (v0.8.0)
+- **Complete Dataset Loading System** - CSV and image dataset loaders with async-first API
+- **Comprehensive Data Preprocessing** - Normalization, standardization, one-hot encoding with dynamic category discovery
+- **Advanced Missing Value Handling** - Forward/backward fill, mean, median, mode, and constant strategies
+- **Principal Component Analysis (PCA)** - Full PCA implementation with power iteration and matrix deflation
+- **Image Data Augmentation** - Flip, rotation, brightness, contrast, and noise adjustments with proper pixel manipulation
+- **Advanced Label Extraction** - Multiple strategies for filename patterns, directory structure, and manual mapping
+- **Outlier Detection and Removal** - Statistical outlier removal using IQR method with configurable thresholds
+- **Polynomial Feature Engineering** - Automated polynomial feature expansion for improved model capacity
+- **Organized Checkpoint System** - Structured checkpoint storage with proper .gitignore configuration
+- **Production-Ready Code Quality** - Removed all placeholders, implemented complete functionality, eliminated AI-generated patterns
 
 ## Recently Completed (v0.7.0)
 - **Clean async-first API** - Removed redundant _sync and _async method suffixes

@@ -1,4 +1,3 @@
-
 use nalgebra::{DVector, DMatrix};
 use rand::{Rng, thread_rng};
 use rand::seq::SliceRandom;
@@ -10,8 +9,14 @@ use tokio::fs;
 pub mod activation;
 pub mod optimizer;
 
+#[cfg(feature = "datasets")]
+pub mod dataset;
+
 pub use activation::ActivationFunction;
 pub use optimizer::{Optimizer, OptimizerState};
+
+#[cfg(feature = "datasets")]
+pub use dataset::{Dataset, DatasetLoader, DatasetError, PreprocessingConfig, FillStrategy};
 
 #[derive(Debug, Clone)]
 pub struct EarlyStopping {

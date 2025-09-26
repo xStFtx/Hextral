@@ -1,1 +1,18 @@
 /target
+
+# Model checkpoints (but keep directory structure)
+/checkpoints/**
+!/checkpoints/
+!/checkpoints/*/
+!/checkpoints/**/.gitkeep
+!/checkpoints/README.md
+
+# Checkpoint file patterns anywhere
+*.checkpoint
+*.ckpt
+model_checkpoint*
+async_model_checkpoint*
+
+# Temporary dataset files (from examples)
+/temp/
+*.tmp

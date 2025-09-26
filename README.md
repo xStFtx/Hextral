@@ -1,6 +1,6 @@
 # Hextral
 
-A high-performance neural network library for Rust with clean async-first API, advanced activation functions, multiple optimizers, early stopping, and checkpointing capabilities.
+A high-performance neural network library for Rust with clean async-first API, comprehensive dataset loading, advanced preprocessing, multiple optimizers, early stopping, and checkpointing capabilities.
 
 [![Crates.io](https://img.shields.io/crates/v/hextral.svg)](https://crates.io/crates/hextral)
 [![Documentation](https://docs.rs/hextral/badge.svg)](https://docs.rs/hextral)
@@ -13,6 +13,14 @@ A high-performance neural network library for Rust with clean async-first API, a
 - **Xavier weight initialization** for stable gradient flow
 - **Flexible network topology** - specify any number of hidden layers and neurons
 - **Clean async-first API** with intelligent yielding for non-blocking operations
+
+### **Dataset Loading & Processing**
+- **CSV Dataset Loader** with automatic type inference, header handling, and data preprocessing
+- **Image Dataset Loader** supporting PNG, JPEG, BMP, TIFF, WebP with resizing and normalization
+- **Data Preprocessing Pipeline** with normalization, standardization, one-hot encoding, and PCA
+- **Missing Value Handling** with forward fill, backward fill, mean, median, and mode strategies
+- **Image Augmentation** with flip, rotation, brightness, contrast, and noise adjustments
+- **Async Dataset Loading** with cooperative multitasking for large datasets
 
 ### **Activation Functions (9 Available)**
 - **ReLU** - Rectified Linear Unit (good for most cases)
@@ -68,9 +76,71 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-hextral = "0.7.0"
+hextral = { version = "0.8.0", features = ["datasets"] }
 nalgebra = "0.33"
 tokio = { version = "1.0", features = ["full"] }  # For async features
+```
+
+### Dataset Loading Example
+
+```rust
+use hextral::{
+    Hextral, ActivationFunction, Optimizer,
+    dataset::{
+        csv::CsvLoader,
+        image::{ImageLoader, LabelStrategy},
+        preprocessing::Preprocessor,
+    }
+};
+use nalgebra::DVector;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load CSV data
+    let csv_loader = CsvLoader::new()
+        .with_headers(true)
+        .with_target_columns_by_name(vec!["species".to_string()]);
+    
+    let mut dataset = csv_loader.from_file("iris.csv").await?;
+    
+    // Apply preprocessing
+    let preprocessor = Preprocessor::new()
+        .standardize(None)  // Standardize all features
+        .one_hot_encode(vec![4]);  // One-hot encode target column
+    
+    let stats = preprocessor.fit_transform(&mut dataset).await?;
+    
+    // Split data (80% train, 20% test)
+    let split_index = (dataset.features.len() as f64 * 0.8) as usize;
+    let (train_features, test_features) = dataset.features.split_at(split_index);
+    let (train_targets, test_targets) = dataset.targets.as_ref().unwrap().split_at(split_index);
+    
+    // Create and train neural network
+    let mut nn = Hextral::new(
+        dataset.metadata.feature_count,
+        &[8, 6],  // Hidden layers
+        3,        // Output classes
+        ActivationFunction::ReLU,
+        Optimizer::adam(0.001),
+    );
+    
+    let (train_history, _) = nn.train(
+        train_features,
+        train_targets,
+        0.01,    // Learning rate
+        100,     // Epochs
+        None,    // Batch size
+        None, None, None, None,  // Validation, early stopping, checkpoints
+    ).await?;
+    
+    println!("Training completed! Final loss: {:.4}", train_history.last().unwrap());
+    
+    // Evaluate on test set
+    let test_loss = nn.evaluate(test_features, test_targets).await;
+    println!("Test loss: {:.4}", test_loss);
+    
+    Ok(())
+}
 ```
 
 ### Basic Async Usage (Recommended)
@@ -319,6 +389,161 @@ println!("Total parameters: {}", nn.parameter_count()); // 25
 // Save/load weights
 let weights = nn.get_weights();
 nn.set_weights(weights);
+```
+
+## Dataset Loading & Preprocessing
+
+Hextral provides comprehensive dataset loading and preprocessing capabilities.
+
+### CSV Dataset Loading
+
+```rust
+use hextral::dataset::csv::{CsvLoader, TargetColumns};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load CSV with automatic type inference
+    let csv_loader = CsvLoader::new()
+        .with_headers(true)
+        .with_delimiter(b',')
+        .with_target_columns_by_name(vec!["target".to_string()])
+        .with_max_rows(Some(1000));
+    
+    let dataset = csv_loader.from_file("data.csv").await?;
+    
+    println!("Loaded {} samples with {} features", 
+             dataset.metadata.sample_count, 
+             dataset.metadata.feature_count);
+    
+    Ok(())
+}
+```
+
+### Image Dataset Loading
+
+```rust
+use hextral::dataset::image::{ImageLoader, LabelStrategy, AugmentationConfig};
+use image::imageops::FilterType;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Configure image preprocessing and augmentation
+    let augmentation = AugmentationConfig::new()
+        .with_horizontal_flip(0.5)
+        .with_rotation(15.0)
+        .with_brightness(0.8, 1.2)
+        .with_contrast(0.8, 1.2)
+        .with_noise(0.1);
+    
+    let image_loader = ImageLoader::new()
+        .with_target_size(224, 224)
+        .with_normalization(true)
+        .with_grayscale(false)
+        .with_label_strategy(LabelStrategy::FromDirectory)
+        .with_augmentation(augmentation)
+        .with_extensions(vec!["jpg".to_string(), "png".to_string()]);
+    
+    let dataset = image_loader.from_directory("./images/").await?;
+    
+    println!("Loaded {} images", dataset.metadata.sample_count);
+    if let Some(ref class_names) = dataset.target_names {
+        println!("Classes: {:?}", class_names);
+    }
+    
+    Ok(())
+}
+```
+
+### Advanced Label Extraction
+
+```rust
+// Extract labels from directory structure
+let strategy = LabelStrategy::FromDirectory;
+
+// Extract labels from filename patterns
+let strategy = LabelStrategy::FromFilename("digit".to_string());      // Extract first digit
+let strategy = LabelStrategy::FromFilename("number".to_string());     // Extract first number
+let strategy = LabelStrategy::FromFilename("split:_".to_string());    // Split by underscore
+let strategy = LabelStrategy::FromFilename("prefix:3".to_string());   // First 3 characters
+
+// Use manual label mapping
+let mut mapping = std::collections::HashMap::new();
+mapping.insert("cat_image".to_string(), 0);
+mapping.insert("dog_image".to_string(), 1);
+let strategy = LabelStrategy::Manual(mapping);
+
+// Load labels from separate file
+let strategy = LabelStrategy::FromFile(PathBuf::from("labels.txt"));
+```
+
+### Data Preprocessing Pipeline
+
+```rust
+use hextral::dataset::{
+    preprocessing::{Preprocessor, PreprocessingUtils},
+    FillStrategy
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut dataset = /* load your dataset */;
+    
+    // Create preprocessing pipeline
+    let preprocessor = Preprocessor::new()
+        .normalize(None)                          // Normalize all features to [0,1]
+        .standardize(Some(vec![0, 1, 2]))        // Standardize specific features
+        .fill_missing(FillStrategy::Mean)         // Fill missing values with mean
+        .remove_outliers(3.0)                    // Remove outliers beyond 3 std devs
+        .one_hot_encode(vec![3])                 // One-hot encode categorical features
+        .apply_polynomial_features(2);            // Add polynomial features (degree 2)
+    
+    // Fit preprocessor and transform data
+    let stats = preprocessor.fit_transform(&mut dataset).await?;
+    
+    // Split dataset
+    let (train_set, val_set, test_set) = PreprocessingUtils::train_val_test_split(
+        &dataset, 0.7, 0.2  // 70% train, 20% val, 10% test
+    ).await?;
+    
+    // Shuffle dataset
+    PreprocessingUtils::shuffle(&mut dataset).await?;
+    
+    // Calculate correlation matrix
+    let correlation = PreprocessingUtils::correlation_matrix(&dataset).await?;
+    
+    Ok(())
+}
+```
+
+### Principal Component Analysis (PCA)
+
+```rust
+// Apply PCA for dimensionality reduction
+let preprocessor = Preprocessor::new()
+    .standardize(None)  // Always standardize before PCA
+    .apply_pca(10);     // Reduce to 10 principal components
+
+let stats = preprocessor.fit_transform(&mut dataset).await?;
+
+// Features are now transformed to principal components
+println!("Reduced from {} to {} dimensions", 
+         stats.feature_means.len(), 
+         dataset.metadata.feature_count);
+```
+
+### Missing Value Handling
+
+```rust
+use hextral::dataset::FillStrategy;
+
+// Different strategies for handling missing values
+let preprocessor = Preprocessor::new()
+    .fill_missing(FillStrategy::Mean)           // Use column mean
+    .fill_missing(FillStrategy::Median)         // Use column median  
+    .fill_missing(FillStrategy::Mode)           // Use most frequent value
+    .fill_missing(FillStrategy::Constant(0.0))  // Fill with constant
+    .fill_missing(FillStrategy::ForwardFill)    // Use previous valid value
+    .fill_missing(FillStrategy::BackwardFill);  // Use next valid value
 ```
 
 ## API Reference

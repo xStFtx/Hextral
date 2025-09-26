@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nTraining with early stopping (patience=10, min_delta=0.001):");
     let early_stop = EarlyStopping::new(10, 0.001, true);
-    let checkpoint_config = CheckpointConfig::new("model_checkpoint".to_string()).save_every(20);
+    let checkpoint_config = CheckpointConfig::new("checkpoints/early_stopping/model_checkpoint".to_string()).save_every(20);
 
     let (train_history, val_history) = nn2.train(
         &train_inputs,
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(&val_inputs),
         Some(&val_targets),
         Some(early_stop),
-        None,
+        Some(checkpoint_config),
     ).await.unwrap();
 
     println!("Training stopped after {} epochs", train_history.len());
@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let early_stop_async = EarlyStopping::new(15, 0.0005, true);
-    let checkpoint_config_async = CheckpointConfig::new("async_model_checkpoint".to_string());
+    let checkpoint_config_async = CheckpointConfig::new("checkpoints/early_stopping/async_model_checkpoint".to_string());
 
     let (train_history_async, val_history_async) = nn3
         .train(
@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(&val_inputs),
             Some(&val_targets),
             Some(early_stop_async),
-            None,
+            Some(checkpoint_config_async),
         )
         .await.unwrap();
 

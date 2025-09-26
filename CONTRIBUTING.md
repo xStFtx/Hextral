@@ -70,6 +70,13 @@ We welcome several types of contributions:
 - New loss functions
 - Architecture improvements
 
+#### **Dataset & Preprocessing**
+- New dataset loaders (e.g., text, audio, time series)
+- Additional preprocessing operations
+- Data augmentation techniques
+- Performance optimizations for large datasets
+- Better error handling for malformed data
+
 #### **Documentation**
 - Improve existing documentation
 - Add code examples
@@ -119,15 +126,50 @@ We welcome several types of contributions:
 ```
 hextral/
 ├── src/
-│   ├── lib.rs          # Main library code
-│   └── tests.rs        # Unit tests
-├── examples/           # Example programs (to be added)
-├── docs/              # Additional documentation (to be added)
-├── Cargo.toml         # Project configuration
-├── README.md          # Project overview
-├── TODO.md            # Development roadmap
-└── CONTRIBUTING.md    # This file
+│   ├── lib.rs                    # Main library code and exports
+│   ├── optimizer.rs              # Optimization algorithms (Adam, SGD, etc.)
+│   ├── quaternion.rs             # Quaternion activation functions
+│   ├── tests.rs                  # Unit tests
+│   └── dataset/                  # Dataset loading and preprocessing
+│       ├── mod.rs               # Dataset module exports  
+│       ├── csv.rs               # CSV dataset loader
+│       ├── image.rs             # Image dataset loader with augmentation
+│       └── preprocessing.rs      # Data preprocessing pipeline
+├── examples/                     # Example programs and demos
+│   ├── async_demo.rs            # Basic async usage
+│   ├── early_stopping_demo.rs   # Training with early stopping
+│   ├── csv_dataset_demo.rs      # CSV data loading examples
+│   ├── image_dataset_demo.rs    # Image loading and training
+│   └── optimizer_demo.rs        # Optimizer comparisons
+├── checkpoints/                  # Model checkpoint storage (gitignored)
+│   ├── early_stopping/         # Early stopping checkpoints
+│   ├── training/               # General training checkpoints
+│   └── experiments/            # Experimental model saves
+├── docs/                        # Additional documentation (to be added)
+├── Cargo.toml                   # Project configuration and dependencies
+├── README.md                    # Project overview and examples
+├── TODO.md                      # Development roadmap
+└── CONTRIBUTING.md              # This file
 ```
+
+### Key Components
+
+#### **Core Library (`src/lib.rs`)**
+- Main `Hextral` neural network struct
+- Training, prediction, and evaluation methods
+- Activation functions and loss functions
+- Async-first API design
+
+#### **Dataset System (`src/dataset/`)**
+- **CSV Loader**: Handles CSV files with type inference, headers, and target extraction
+- **Image Loader**: Supports multiple formats with preprocessing and augmentation
+- **Preprocessing Pipeline**: Normalization, standardization, PCA, missing value handling
+- **Async-first**: All dataset operations use cooperative multitasking
+
+#### **Optimizers (`src/optimizer.rs`)**
+- 12 different optimization algorithms
+- Adam, AdamW, SGD, RMSprop, and modern variants
+- Consistent interface for all optimizers
 
 ## Coding Standards
 
