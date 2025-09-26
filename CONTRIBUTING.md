@@ -148,20 +148,20 @@ hextral/
 
 ### Async Programming Guidelines
 
-When contributing async functionality:
+Hextral v0.7.0 uses a clean async-first API design:
 
-- **Provide both sync and async versions** - All core methods should have both sync and async variants
+- **Async-first API** - All core methods are async by default: `train()`, `predict()`, `evaluate()`, etc.
 - **Use intelligent yielding** - Only yield for large workloads (>1000 elements or >10 batches) to prevent unnecessary overhead
 - **Leverage parallel processing** - Use `futures::join_all` for concurrent batch operations
-- **Maintain API consistency** - Async methods should follow the same naming pattern: `method_async`
-- **Optimize performance** - Async should not degrade performance for small operations
+- **Clean method naming** - No redundant suffixes, methods are async by default
+- **Optimize performance** - Intelligent yielding ensures good performance for both small and large operations
 - **Use tokio::task::yield_now()** - For cooperative multitasking in computationally intensive operations
 
 ### Async Code Style Examples
 
 ```rust
 /// Async training method with intelligent yielding
-pub async fn train_async(
+pub async fn train(
     &mut self,
     inputs: &[DVector<f64>],
     targets: &[DVector<f64>],
@@ -177,15 +177,19 @@ pub async fn train_async(
 }
 
 /// Concurrent batch prediction
-pub async fn predict_batch_async(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>> {
+pub async fn predict_batch(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>> {
     if inputs.len() > 10 {
         let futures: Vec<_> = inputs.iter()
-            .map(|input| self.forward_async(input))
+            .map(|input| self.forward(input))
             .collect();
         join_all(futures).await
     } else {
-        // Use sync version for small batches
-        inputs.iter().map(|input| self.forward(input)).collect()
+        // Still use async but without overhead for small batches
+        let mut results = Vec::new();
+        for input in inputs {
+            results.push(self.forward(input).await);
+        }
+        results
     }
 }
 ```
@@ -406,4 +410,3 @@ Contributors will be recognized in:
 - Project documentation
 
 Thank you for contributing to Hextral!
-

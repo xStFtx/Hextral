@@ -1,7 +1,7 @@
 use nalgebra::DVector;
-use futures::future::join_all;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActivationFunction {
     Sigmoid,
     ReLU,
@@ -12,6 +12,7 @@ pub enum ActivationFunction {
     Swish { beta: f64 },
     GELU,
     Mish,
+    Quaternion,
 }
 
 impl ActivationFunction {
@@ -38,7 +39,10 @@ impl ActivationFunction {
                 })
             },
             ActivationFunction::Mish => {
-                input.map(|x| x * (x.exp().ln_1p()).tanh()) // softplus(x) = ln(1 + exp(x))
+                input.map(|x| x * (x.exp().ln_1p()).tanh())
+            },
+            ActivationFunction::Quaternion => {
+                quaternion_activation(input)
             },
         }
     }
@@ -88,41 +92,78 @@ impl ActivationFunction {
                     tanh_softplus + x * sigmoid_x * (1.0 - tanh_softplus.powi(2))
                 })
             },
+            ActivationFunction::Quaternion => {
+                quaternion_activation_derivative(input)
+            },
         }
-    }
-
-    pub async fn apply_async(&self, input: &DVector<f64>) -> DVector<f64> {
-        if input.len() > 1000 {
-            let result = self.apply(input);
-            tokio::task::yield_now().await;
-            result
-        } else {
-            self.apply(input)
-        }
-    }
-
-    pub async fn apply_batch_async(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>> {
-        if inputs.len() > 10 {
-            let futures: Vec<_> = inputs.iter()
-                .map(|input| self.apply_async(input))
-                .collect();
-            join_all(futures).await
-        } else {
-            inputs.iter().map(|input| self.apply(input)).collect()
-        }
-    }
-
-    pub async fn apply_derivative_async(&self, input: &DVector<f64>) -> DVector<f64> {
-        if input.len() > 1000 {
-            let result = self.apply_derivative(input);
-            tokio::task::yield_now().await;
-            result
-        } else {
-            self.apply_derivative(input)
-        }
-    }
+}
 }
 
 fn sigmoid(x: f64) -> f64 {
     1.0 / (1.0 + (-x).exp())
+}
+
+pub fn quaternion_activation(input: &DVector<f64>) -> DVector<f64> {
+    let len = input.len();
+    if len < 4 {
+        return input.clone();
+    }
+    
+    let mut result = input.clone();
+    let chunk_size = len / 4;
+    
+    for i in 0..chunk_size {
+        let base_idx = i * 4;
+        if base_idx + 3 < len {
+            let w = input[base_idx];
+            let x = input[base_idx + 1];
+            let y = input[base_idx + 2];
+            let z = input[base_idx + 3];
+            
+            let norm = (w*w + x*x + y*y + z*z).sqrt();
+            if norm > 0.0 {
+                result[base_idx] = w / norm;
+                result[base_idx + 1] = x / norm;
+                result[base_idx + 2] = y / norm;
+                result[base_idx + 3] = z / norm;
+            }
+        }
+    }
+    
+    result
+}
+
+pub fn quaternion_activation_derivative(input: &DVector<f64>) -> DVector<f64> {
+    let len = input.len();
+    if len < 4 {
+        return DVector::from_element(len, 1.0);
+    }
+    
+    let mut result = DVector::from_element(len, 1.0);
+    let chunk_size = len / 4;
+    
+    for i in 0..chunk_size {
+        let base_idx = i * 4;
+        if base_idx + 3 < len {
+            let w = input[base_idx];
+            let x = input[base_idx + 1];
+            let y = input[base_idx + 2];
+            let z = input[base_idx + 3];
+            
+            let norm_sq = w*w + x*x + y*y + z*z;
+            let norm = norm_sq.sqrt();
+            
+            if norm > 0.0 {
+                let inv_norm = 1.0 / norm;
+                let inv_norm_cubed = inv_norm * inv_norm * inv_norm;
+                
+                result[base_idx] = inv_norm - w*w*inv_norm_cubed;
+                result[base_idx + 1] = inv_norm - x*x*inv_norm_cubed;
+                result[base_idx + 2] = inv_norm - y*y*inv_norm_cubed;
+                result[base_idx + 3] = inv_norm - z*z*inv_norm_cubed;
+            }
+        }
+    }
+    
+    result
 }

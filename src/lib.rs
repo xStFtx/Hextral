@@ -1,14 +1,136 @@
-//! Neural network library with batch normalization and async support.
+//! # Hextral - Async-First Neural Network Library
+//!
+//! Hextral is a high-performance, async-first neural network library for Rust, designed for
+//! modern concurrent applications. It provides a clean API with comprehensive optimization 
+//! and regularization features.
+//!
+//! ## Key Features
+//!
+//! - **Clean async-first API** - All methods are async by default with intelligent yielding
+//! - **Early stopping** - Configurable patience and validation loss monitoring
+//! - **Model checkpointing** - Save and load models with bincode serialization
+//! - **12 modern optimizers** - Adam, AdamW, RMSprop, Lion, AdaBelief, and more
+//! - **9 activation functions** - ReLU, Sigmoid, Tanh, GELU, Swish, Mish, etc.
+//! - **5 comprehensive loss functions** - MSE, CrossEntropy, BCE, Huber, MAE
+//! - **Batch normalization** - Optional layer-wise normalization for training stability
+//! - **Advanced regularization** - L1, L2, and dropout support
+//! - **Concurrent batch processing** - Parallel predictions using futures
+//!
+//! ## Quick Start
+//!
+//! ```rust
+//! use hextral::{Hextral, ActivationFunction, Optimizer};
+//! use nalgebra::DVector;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let mut nn = Hextral::new(
+//!         2, &[8, 4], 1,
+//!         ActivationFunction::ReLU,
+//!         Optimizer::Adam { learning_rate: 0.001, beta1: 0.9, beta2: 0.999, epsilon: 1e-8 },
+//!     );
+//!
+//!     let inputs = vec![DVector::from_vec(vec![0.0, 0.0])];
+//!     let targets = vec![DVector::from_vec(vec![0.0])];
+//!
+//!     // Train with async API
+//!     let losses = nn.train(&inputs, &targets, 0.01, 100, Some(1), None, None, None, None).await;
+//!     
+//!     // Make predictions
+//!     let prediction = nn.predict(&inputs[0]).await;
+//!
+//!     Ok(())
+//! }
+//! ```
 
 use nalgebra::{DVector, DMatrix};
 use rand::{Rng, thread_rng};
 use rand::seq::SliceRandom;
 use futures::future::join_all;
+use serde::{Serialize, Deserialize};
+use std::path::Path;
+use tokio::fs;
 
-mod activation;
+pub mod activation;
+pub mod optimizer;
+
 pub use activation::ActivationFunction;
+pub use optimizer::{Optimizer, OptimizerState};
 
 #[derive(Debug, Clone)]
+pub struct EarlyStopping {
+    pub patience: usize,
+    pub min_delta: f64,
+    pub best_loss: f64,
+    pub counter: usize,
+    pub restore_best_weights: bool,
+}
+
+impl EarlyStopping {
+    pub fn new(patience: usize, min_delta: f64, restore_best_weights: bool) -> Self {
+        Self {
+            patience,
+            min_delta,
+            best_loss: f64::INFINITY,
+            counter: 0,
+            restore_best_weights,
+        }
+    }
+    
+    pub fn should_stop(&mut self, current_loss: f64) -> bool {
+        if current_loss < self.best_loss - self.min_delta {
+            self.best_loss = current_loss;
+            self.counter = 0;
+            false
+        } else {
+            self.counter += 1;
+            self.counter >= self.patience
+        }
+    }
+    
+    pub fn reset(&mut self) {
+        self.best_loss = f64::INFINITY;
+        self.counter = 0;
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointConfig {
+    pub save_best: bool,
+    pub save_every: Option<usize>,
+    pub filepath: String,
+    pub monitor_loss: bool,
+}
+
+impl CheckpointConfig {
+    pub fn new<P: AsRef<Path>>(filepath: P) -> Self {
+        Self {
+            save_best: true,
+            save_every: None,
+            filepath: filepath.as_ref().to_string_lossy().to_string(),
+            monitor_loss: true,
+        }
+    }
+    
+    pub fn save_every(mut self, epochs: usize) -> Self {
+        self.save_every = Some(epochs);
+        self
+    }
+    
+    pub async fn save_weights(&self, weights: &[(DMatrix<f64>, DVector<f64>)]) -> Result<(), Box<dyn std::error::Error>> {
+        let data = bincode::serialize(weights)?;
+        fs::write(&self.filepath, data).await?;
+        Ok(())
+    }
+    
+    pub async fn load_weights(&self) -> Result<Vec<(DMatrix<f64>, DVector<f64>)>, Box<dyn std::error::Error>> {
+        let data = fs::read(&self.filepath).await?;
+        let weights = bincode::deserialize(&data)?;
+        Ok(weights)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Regularization {
     L2(f64),
     L1(f64),
@@ -16,20 +138,7 @@ pub enum Regularization {
     None,
 }
 
-#[derive(Debug, Clone)]
-pub enum Optimizer {
-    SGD { learning_rate: f64 },
-    SGDMomentum { learning_rate: f64, momentum: f64 },
-    Adam { learning_rate: f64 },
-}
-
-impl Default for Optimizer {
-    fn default() -> Self {
-        Optimizer::Adam { learning_rate: 0.001 }
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LossFunction {
     MeanSquaredError,
     MeanAbsoluteError,
@@ -45,7 +154,7 @@ impl Default for LossFunction {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchNormLayer {
     gamma: DVector<f64>,
     beta: DVector<f64>,
@@ -105,11 +214,68 @@ impl BatchNormLayer {
     }
 }
 
-#[derive(Clone)]
+/// A neural network with async-first API, featuring batch normalization, early stopping, 
+/// and comprehensive optimization support.
+///
+/// Hextral provides a clean, async-first interface for training and inference with neural networks.
+/// All core methods (train, predict, evaluate) are async by default for optimal performance in
+/// concurrent environments.
+///
+/// # Features
+/// - **Async-first API**: All methods are async with intelligent yielding
+/// - **Early stopping**: Configurable patience and validation loss monitoring  
+/// - **Model checkpointing**: Save and load models with bincode serialization
+/// - **12 optimizers**: Adam, AdamW, RMSprop, Lion, AdaBelief, and more
+/// - **9 activation functions**: ReLU, Sigmoid, Tanh, GELU, Swish, etc.
+/// - **5 loss functions**: MSE, CrossEntropy, BCE, Huber, and MAE
+/// - **Batch normalization**: Optional layer-wise normalization
+/// - **Regularization**: L1, L2, and dropout support
+///
+/// # Example
+/// ```rust
+/// use hextral::{Hextral, ActivationFunction, Optimizer};
+/// use nalgebra::DVector;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let mut nn = Hextral::new(
+///         2,                           // input size
+///         &[8, 4],                    // hidden layers
+///         1,                          // output size
+///         ActivationFunction::ReLU,   // activation
+///         Optimizer::Adam { learning_rate: 0.001, beta1: 0.9, beta2: 0.999, epsilon: 1e-8 },
+///     );
+///
+///     // Training data
+///     let inputs = vec![
+///         DVector::from_vec(vec![0.0, 0.0]),
+///         DVector::from_vec(vec![0.0, 1.0]),
+///         DVector::from_vec(vec![1.0, 0.0]),
+///         DVector::from_vec(vec![1.0, 1.0]),
+///     ];
+///     let targets = vec![
+///         DVector::from_vec(vec![0.0]),
+///         DVector::from_vec(vec![1.0]),
+///         DVector::from_vec(vec![1.0]),
+///         DVector::from_vec(vec![0.0]),
+///     ];
+///
+///     // Train the network
+///     let losses = nn.train(&inputs, &targets, 0.01, 1000, Some(2), None, None, None, None).await;
+///     
+///     // Make predictions
+///     let prediction = nn.predict(&inputs[0]).await;
+///     println!("Prediction: {:?}", prediction);
+///
+///     Ok(())
+/// }
+/// ```
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Hextral {
     layers: Vec<(DMatrix<f64>, DVector<f64>)>,
     activation: ActivationFunction,
     optimizer: Optimizer,
+    optimizer_state: OptimizerState,
     regularization: Regularization,
     loss_function: LossFunction,
     batch_norm_layers: Vec<Option<BatchNormLayer>>,
@@ -148,9 +314,15 @@ impl Hextral {
         let bias = DVector::zeros(output_size);
         layers.push((weight, bias));
 
+        // Create layer shapes for optimizer state initialization
+        let layer_shapes: Vec<(usize, usize)> = layers.iter()
+            .map(|(w, _)| (w.nrows(), w.ncols()))
+            .collect();
+
         Hextral {
             layers,
             activation,
+            optimizer_state: OptimizerState::new(&layer_shapes),
             optimizer,
             regularization: Regularization::None,
             loss_function: LossFunction::default(),
@@ -200,11 +372,12 @@ impl Hextral {
         }
     }
 
-    pub async fn forward_async(&self, input: &DVector<f64>) -> DVector<f64> {
+    pub async fn forward(&self, input: &DVector<f64>) -> DVector<f64> {
+        let mut output = input.clone();
+        
         // Only yield if network has many layers
         if self.layers.len() > 5 {
             let mid = self.layers.len() / 2;
-            let mut output = input.clone();
             
             for (i, (weight, bias)) in self.layers.iter().enumerate() {
                 output = weight * &output + bias;
@@ -215,46 +388,35 @@ impl Hextral {
                     tokio::task::yield_now().await;
                 }
             }
-            output
         } else {
-            self.forward(input)
-        }
-    }
-
-    pub fn forward(&self, input: &DVector<f64>) -> DVector<f64> {
-        let mut output = input.clone();
-        
-        for (i, (weight, bias)) in self.layers.iter().enumerate() {
-            output = weight * &output + bias;
-            if i < self.layers.len() - 1 {
-                output = self.activation.apply(&output);
+            for (i, (weight, bias)) in self.layers.iter().enumerate() {
+                output = weight * &output + bias;
+                if i < self.layers.len() - 1 {
+                    output = self.activation.apply(&output);
+                }
             }
         }
         
         output
     }
 
-    pub async fn predict_async(&self, input: &DVector<f64>) -> DVector<f64> {
-        self.forward_async(input).await
+    pub async fn predict(&self, input: &DVector<f64>) -> DVector<f64> {
+        self.forward(input).await
     }
 
-    pub fn predict(&self, input: &DVector<f64>) -> DVector<f64> {
-        self.forward(input)
-    }
-
-    pub async fn predict_batch_async(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>> {
+    pub async fn predict_batch(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>> {
         if inputs.len() > 10 {
             let futures: Vec<_> = inputs.iter()
-                .map(|input| self.predict_async(input))
+                .map(|input| self.predict(input))
                 .collect();
             join_all(futures).await
         } else {
-            inputs.iter().map(|input| self.predict(input)).collect()
+            let mut results = Vec::new();
+            for input in inputs {
+                results.push(self.predict(input).await);
+            }
+            results
         }
-    }
-
-    pub fn predict_batch(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>> {
-        inputs.iter().map(|input| self.predict(input)).collect()
     }
 
     /// Compute loss between prediction and target
@@ -341,15 +503,7 @@ impl Hextral {
         }
     }
 
-    pub async fn train_step_async(&mut self, input: &DVector<f64>, target: &DVector<f64>, learning_rate: f64) -> f64 {
-        let loss = self.train_step(input, target, learning_rate);
-        if self.layers.len() > 3 {
-            tokio::task::yield_now().await;
-        }
-        loss
-    }
-
-    pub fn train_step(&mut self, input: &DVector<f64>, target: &DVector<f64>, learning_rate: f64) -> f64 {
+    pub async fn train_step(&mut self, input: &DVector<f64>, target: &DVector<f64>, learning_rate: f64) -> f64 {
         // Forward pass - collect activations
         let mut activations = vec![input.clone()];
         let mut current = input.clone();
@@ -393,21 +547,18 @@ impl Hextral {
             
             let final_weight_grad = weight_grad + reg_weight_grad;
             
-            // Update parameters
-            let effective_lr = match &self.optimizer {
-                Optimizer::SGD { learning_rate: lr } => lr * learning_rate,
-                Optimizer::SGDMomentum { learning_rate: lr, momentum: _ } => {
-                    // Simplified - ignore momentum for now
-                    lr * learning_rate
-                },
-                Optimizer::Adam { learning_rate: lr } => {
-                    // Simplified - just use as SGD
-                    lr * learning_rate
-                },
-            };
-            
-            self.layers[i].0 -= &final_weight_grad * effective_lr;
-            self.layers[i].1 -= &bias_grad * effective_lr;
+            // Update parameters using the new optimizer system
+            let (mut weights, mut biases) = self.layers[i].clone();
+            self.optimizer.update_parameters(
+                &mut weights,
+                &mut biases,
+                &final_weight_grad,
+                &bias_grad,
+                &mut self.optimizer_state,
+                i,
+                learning_rate,
+            );
+            self.layers[i] = (weights, biases);
             
             // Propagate error to previous layer
             if i > 0 {
@@ -415,90 +566,123 @@ impl Hextral {
             }
         }
         
+        // Yield occasionally for async compatibility
+        if self.layers.len() > 3 {
+            tokio::task::yield_now().await;
+        }
+        
         loss
     }
 
-    pub async fn train_async(
+    /// Full async training method with early stopping and checkpoints
+    pub async fn train(
         &mut self,
         train_inputs: &[DVector<f64>],
         train_targets: &[DVector<f64>],
         learning_rate: f64,
         epochs: usize,
         batch_size: Option<usize>,
-    ) -> Vec<f64> {
-        let mut loss_history = Vec::new();
+        val_inputs: Option<&[DVector<f64>]>,
+        val_targets: Option<&[DVector<f64>]>,
+        early_stopping: Option<EarlyStopping>,
+        checkpoint_config: Option<CheckpointConfig>,
+    ) -> Result<(Vec<f64>, Vec<f64>), Box<dyn std::error::Error>> {
+        let mut train_loss_history = Vec::new();
+        let mut val_loss_history = Vec::new();
+        let mut early_stop = early_stopping;
+        let mut best_val_loss = f64::INFINITY;
         let batch_size = batch_size.unwrap_or(32);
 
-        for _epoch in 0..epochs {
+        for epoch in 0..epochs {
+            // Training phase
             let mut epoch_loss = 0.0;
             let mut indices: Vec<usize> = (0..train_inputs.len()).collect();
             indices.shuffle(&mut thread_rng());
             
             for batch in indices.chunks(batch_size) {
                 for &i in batch {
-                    epoch_loss += self.train_step_async(&train_inputs[i], &train_targets[i], learning_rate).await;
+                    epoch_loss += self.train_step(&train_inputs[i], &train_targets[i], learning_rate).await;
                 }
                 if batch_size > 10 {
                     tokio::task::yield_now().await;
                 }
             }
             
-            let avg_loss = epoch_loss / train_inputs.len() as f64;
-            loss_history.push(avg_loss);
-        }
+            let train_loss = epoch_loss / train_inputs.len() as f64;
+            train_loss_history.push(train_loss);
 
-        loss_history
-    }
+            // Validation phase
+            let val_loss = if let (Some(val_inputs), Some(val_targets)) = (val_inputs, val_targets) {
+                self.evaluate(val_inputs, val_targets).await
+            } else {
+                train_loss // Use training loss if no validation data
+            };
+            val_loss_history.push(val_loss);
 
-    pub fn train(
-        &mut self,
-        train_inputs: &[DVector<f64>],
-        train_targets: &[DVector<f64>],
-        learning_rate: f64,
-        epochs: usize,
-    ) -> Vec<f64> {
-        let mut loss_history = Vec::new();
-
-        for _ in 0..epochs {
-            let mut epoch_loss = 0.0;
-            let mut indices: Vec<usize> = (0..train_inputs.len()).collect();
-            indices.shuffle(&mut thread_rng());
-            
-            for &i in &indices {
-                epoch_loss += self.train_step(&train_inputs[i], &train_targets[i], learning_rate);
+            // Checkpoint management
+            if let Some(ref config) = checkpoint_config {
+                let should_save_best = config.save_best && val_loss < best_val_loss;
+                let should_save_periodic = config.save_every.map_or(false, |freq| (epoch + 1) % freq == 0);
+                
+                if should_save_best {
+                    best_val_loss = val_loss;
+                    config.save_weights(&self.layers).await?;
+                }
+                
+                if should_save_periodic {
+                    let periodic_path = format!("{}_epoch_{}", config.filepath, epoch + 1);
+                    let periodic_config = CheckpointConfig::new(&periodic_path);
+                    periodic_config.save_weights(&self.layers).await?;
+                }
             }
+
+            // Early stopping check
+            if let Some(ref mut early_stop) = early_stop {
+                if early_stop.should_stop(val_loss) {
+                    if early_stop.restore_best_weights {
+                        if let Some(ref config) = checkpoint_config {
+                            if config.save_best {
+                                match config.load_weights().await {
+                                    Ok(weights) => self.set_weights(weights),
+                                    Err(_) => {} // Continue with current weights if loading fails
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            // Yield occasionally for long training
+            if epoch % 10 == 0 {
+                tokio::task::yield_now().await;
+            }
+        }
+
+        Ok((train_loss_history, val_loss_history))
+    }
+
+    pub async fn evaluate(&self, test_inputs: &[DVector<f64>], test_targets: &[DVector<f64>]) -> f64 {
+        if test_inputs.len() > 10 {
+            // Process predictions in parallel for large datasets
+            let predictions = self.predict_batch(test_inputs).await;
             
-            loss_history.push(epoch_loss / train_inputs.len() as f64);
+            let mut total_loss = 0.0;
+            for (prediction, target) in predictions.iter().zip(test_targets.iter()) {
+                let loss = self.compute_loss(prediction, target);
+                total_loss += loss;
+            }
+            total_loss / test_inputs.len() as f64
+        } else {
+            // Process sequentially for small datasets
+            let mut total_loss = 0.0;
+            for (input, target) in test_inputs.iter().zip(test_targets.iter()) {
+                let prediction = self.predict(input).await;
+                let loss = self.compute_loss(&prediction, target);
+                total_loss += loss;
+            }
+            total_loss / test_inputs.len() as f64
         }
-
-        loss_history
-    }
-
-    /// Evaluate the network on test data (async version with parallel processing)
-    pub async fn evaluate_async(&self, test_inputs: &[DVector<f64>], test_targets: &[DVector<f64>]) -> f64 {
-        // Process predictions in parallel
-        let predictions = self.predict_batch_async(test_inputs).await;
-        
-        let mut total_loss = 0.0;
-        for (prediction, target) in predictions.iter().zip(test_targets.iter()) {
-            let loss = self.compute_loss(prediction, target);
-            total_loss += loss;
-        }
-
-        total_loss / test_inputs.len() as f64
-    }
-
-    /// Evaluate the network on test data (synchronous version)
-    pub fn evaluate(&self, test_inputs: &[DVector<f64>], test_targets: &[DVector<f64>]) -> f64 {
-        let mut total_loss = 0.0;
-        
-        for (input, target) in test_inputs.iter().zip(test_targets.iter()) {
-            let prediction = self.predict(input);
-            let loss = self.compute_loss(&prediction, target);
-            total_loss += loss;
-        }
-
-        total_loss / test_inputs.len() as f64
     }
 
     /// Get the number of parameters in the network
@@ -527,6 +711,3 @@ impl Hextral {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -3,7 +3,7 @@ use nalgebra::DVector;
 use tokio::time::Instant;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Hextral Async Demo");
     println!("==================\n");
 
@@ -12,7 +12,7 @@ async fn main() {
         &[8, 8],
         1,
         ActivationFunction::ReLU,
-        Optimizer::Adam { learning_rate: 0.01 },
+        Optimizer::adam(0.01),
     );
 
     let train_inputs = vec![
@@ -37,15 +37,15 @@ async fn main() {
     let mut nn_async = nn.clone();
 
     let start = Instant::now();
-    let _sync_loss = nn_sync.train(&train_inputs, &train_targets, 0.1, 50);
+    let _ = nn_sync.train(&train_inputs, &train_targets, 0.1, 50, None, None, None, None, None).await?;
     let sync_time = start.elapsed();
     
     let start = Instant::now();
-    let _async_loss = nn_async.train_async(&train_inputs, &train_targets, 0.1, 50, Some(2)).await;
+    let _ = nn_async.train(&train_inputs, &train_targets, 0.1, 50, Some(2), None, None, None, None).await?;
     let async_time = start.elapsed();
 
-    println!("Sync time: {:?}", sync_time);
-    println!("Async time: {:?}", async_time);
+    println!("First time: {:?}", sync_time);
+    println!("Batched time: {:?}", async_time);
 
     // Batch prediction comparison
     let test_inputs = vec![
@@ -55,14 +55,16 @@ async fn main() {
         DVector::from_vec(vec![1.0, 1.0]),
     ];
 
-    let sync_predictions = nn_sync.predict_batch(&test_inputs);
-    let async_predictions = nn_async.predict_batch_async(&test_inputs).await;
+    let predictions1 = nn_sync.predict_batch(&test_inputs).await;
+    let predictions2 = nn_async.predict_batch(&test_inputs).await;
 
     println!("\nPredictions:");
     for (i, input) in test_inputs.iter().enumerate() {
-        println!("[{:.0}, {:.0}] -> Sync: {:.3} | Async: {:.3}", 
+        println!("[{:.0}, {:.0}] -> First: {:.3} | Batched: {:.3}", 
                 input[0], input[1], 
-                sync_predictions[i][0], 
-                async_predictions[i][0]);
+                predictions1[i][0], 
+                predictions2[i][0]);
     }
+    
+    Ok(())
 }

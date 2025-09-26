@@ -1,10 +1,9 @@
 # Hextral
 
-A high-performance neural network library for Rust with comprehensive async/await support, advanced activation functions, multiple optimizers, and flexible architecture design.
+A high-performance neural network library for Rust with clean async-first API, advanced activation functions, multiple optimizers, early stopping, and checkpointing capabilities.
 
 [![Crates.io](https://img.shields.io/crates/v/hextral.svg)](https://crates.io/crates/hextral)
 [![Documentation](https://docs.rs/hextral/badge.svg)](https://docs.rs/hextral)
-[![License](https://img.shields.io/crates/l/hextral.svg)](LICENSE)
 
 ## Features
 
@@ -13,7 +12,7 @@ A high-performance neural network library for Rust with comprehensive async/awai
 - **Batch normalization** for improved training stability and convergence
 - **Xavier weight initialization** for stable gradient flow
 - **Flexible network topology** - specify any number of hidden layers and neurons
-- **Full async/await support** with intelligent yielding for non-blocking operations
+- **Clean async-first API** with intelligent yielding for non-blocking operations
 
 ### **Activation Functions (9 Available)**
 - **ReLU** - Rectified Linear Unit (good for most cases)
@@ -25,6 +24,7 @@ A high-performance neural network library for Rust with comprehensive async/awai
 - **Swish** - Modern activation with smooth derivatives
 - **GELU** - Gaussian Error Linear Unit used in transformers
 - **Mish** - Self-regularizing activation function
+- **Quaternion** - Quaternion-based normalization for 4D data
 
 ### **Loss Functions (5 Available)**
 - **Mean Squared Error (MSE)** - Standard regression loss
@@ -33,22 +33,26 @@ A high-performance neural network library for Rust with comprehensive async/awai
 - **Categorical Cross-Entropy** - Multi-class classification
 - **Huber Loss** - Robust hybrid of MSE and MAE
 
-### **Optimization Algorithms**
+### **Optimization Algorithms (12 Available)**
 - **Adam** - Adaptive moment estimation (recommended for most cases)
+- **AdamW** - Adam with decoupled weight decay
+- **NAdam** - Nesterov-accelerated Adam
+- **AdaBelief** - Adapting stepsizes by belief in observed gradients
+- **Lion** - Evolved sign momentum optimizer
 - **SGD** - Stochastic Gradient Descent (simple and reliable)
 - **SGD with Momentum** - Accelerated gradient descent
+- **RMSprop** - Root mean square propagation
+- **AdaGrad** - Adaptive gradient algorithm
+- **AdaDelta** - Extension of AdaGrad
+- **LBFGS** - Limited-memory BFGS (quasi-Newton method)
+- **Ranger** - Combination of RAdam and LookAhead
 
-### **Regularization Techniques**
-- **L2 Regularization** - Prevents overfitting by penalizing large weights
-- **L1 Regularization** - Encourages sparse networks and feature selection
-- **Dropout** - Randomly deactivates neurons during training
-
-### **Training & Evaluation**
-- **Flexible loss computation** with configurable loss functions
-- **Batch normalization** with training/inference modes
-- **Training progress tracking** with loss history
-- **Batch and single-sample prediction**
-- **Model evaluation** metrics and loss computation
+### **Advanced Training Features**
+- **Early Stopping** - Automatic training termination based on validation loss
+- **Checkpointing** - Save and restore model weights with bincode serialization
+- **Regularization** - L1/L2 regularization and dropout support
+- **Batch Training** - Configurable batch sizes for memory efficiency
+- **Training Progress Tracking** - Loss history and validation monitoring
 - **Dual sync/async API** for both blocking and non-blocking operations
 
 ### **Async/Concurrent Processing**
@@ -64,96 +68,137 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-hextral = "0.6.0"
+hextral = "0.7.0"
 nalgebra = "0.33"
 tokio = { version = "1.0", features = ["full"] }  # For async features
 ```
 
-### Basic Usage
+### Basic Async Usage (Recommended)
 
 ```rust
-use hextral::{Hextral, ActivationFunction, Optimizer};
+use hextral::{Hextral, ActivationFunction, Optimizer, EarlyStopping, CheckpointConfig};
 use nalgebra::DVector;
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a neural network: 2 inputs -> [4, 3] hidden -> 1 output
     let mut nn = Hextral::new(
         2,                                    // Input features
         &[4, 3],                             // Hidden layer sizes  
         1,                                    // Output size
         ActivationFunction::ReLU,             // Activation function
-        Optimizer::Adam { learning_rate: 0.01 }, // Optimizer
+        Optimizer::adam(0.01),                // Modern Adam optimizer
     );
 
     // Training data for XOR problem
-    let inputs = vec![
+    let train_inputs = vec![
         DVector::from_vec(vec![0.0, 0.0]),
         DVector::from_vec(vec![0.0, 1.0]),
         DVector::from_vec(vec![1.0, 0.0]),
         DVector::from_vec(vec![1.0, 1.0]),
     ];
-    let targets = vec![
+    let train_targets = vec![
         DVector::from_vec(vec![0.0]),
         DVector::from_vec(vec![1.0]),
         DVector::from_vec(vec![1.0]),
         DVector::from_vec(vec![0.0]),
     ];
 
-    // Train the network
-    println!("Training network...");
-    let loss_history = nn.train(&inputs, &targets, 1.0, 100);
+    // Validation data (can be same as training for demo)
+    let val_inputs = train_inputs.clone();
+    let val_targets = train_targets.clone();
+
+    // Configure early stopping and checkpointing
+    let early_stopping = EarlyStopping::new(10, 0.001, true);
+    let checkpoint_config = CheckpointConfig::new("best_model".to_string());
+
+    // Train the network with advanced features
+    println!("Training network with early stopping...");
+    let (train_history, val_history) = nn.train(
+        &train_inputs,
+        &train_targets,
+        0.1,                           // Learning rate
+        1000,                          // Max epochs
+        Some(2),                       // Batch size
+        Some(&val_inputs),             // Validation inputs
+        Some(&val_targets),            // Validation targets
+        Some(early_stopping),          // Early stopping
+        Some(checkpoint_config),       // Checkpointing
+    ).await?;
+
+    println!("Training completed after {} epochs", train_history.len());
+    println!("Final validation loss: {:.6}", val_history.last().unwrap_or(&0.0));
 
     // Make predictions
-    for (input, expected) in inputs.iter().zip(targets.iter()) {
-        let prediction = nn.predict(input);
+    println!("\nPredictions:");
+    for (input, expected) in train_inputs.iter().zip(train_targets.iter()) {
+        let prediction = nn.predict(input).await;
         println!("Input: {:?} | Expected: {:.1} | Predicted: {:.3}", 
                  input.data.as_vec(), expected[0], prediction[0]);
     }
 
+    // Batch prediction (efficient for multiple inputs)
+    let batch_predictions = nn.predict_batch(&train_inputs).await;
+    
     // Evaluate performance
-    let final_loss = nn.evaluate(&inputs, &targets);
+    let final_loss = nn.evaluate(&train_inputs, &train_targets).await;
     println!("Final loss: {:.6}", final_loss);
+
+    Ok(())
 }
 ```
 
-### Async Usage
-
-For high-performance applications requiring concurrent processing:
+### Advanced Features
 
 ```rust
-use hextral::{Hextral, ActivationFunction, Optimizer};
-use nalgebra::DVector;
+use hextral::*;
 
-#[tokio::main]
-async fn main() {
-    // Create the same neural network
+#[tokio::main] 
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create network with advanced activation function
     let mut nn = Hextral::new(
-        2, &[4, 3], 1,
-        ActivationFunction::ReLU,
-        Optimizer::Adam { learning_rate: 0.01 },
+        4, &[8, 6], 2,
+        ActivationFunction::Swish { beta: 1.0 },  // Modern Swish activation
+        Optimizer::adamw(0.001, 0.01),            // AdamW with weight decay
     );
 
-    let inputs = vec![/* ... training data ... */];
-    let targets = vec![/* ... target data ... */];
+    // Enable batch normalization for better training stability
+    nn.enable_batch_norm();
+    nn.set_training_mode(true);
 
-    // Async training with batch processing
-    let loss_history = nn.train_async(&inputs, &targets, 1.0, 100, Some(32)).await;
+    // Configure regularization
+    nn.set_regularization(Regularization::L2(0.001));
 
-    // Async batch predictions (parallel processing)
-    let predictions = nn.predict_batch_async(&inputs).await;
+    let inputs = vec![/* your training data */];
+    let targets = vec![/* your target data */];
+
+    // Advanced training with all features
+    let early_stop = EarlyStopping::new(
+        15,      // Patience: stop if no improvement for 15 epochs
+        0.0001,  // Minimum improvement threshold
+        true,    // Restore best weights when stopping
+    );
+
+    let checkpoint = CheckpointConfig::new("model_checkpoint".to_string())
+        .save_every(10);  // Save every 10 epochs
+
+    let (train_losses, val_losses) = nn.train(
+        &inputs, &targets,
+        0.01,               // Learning rate
+        500,                // Max epochs
+        Some(32),           // Batch size
+        Some(&inputs),      // Validation inputs
+        Some(&targets),     // Validation targets
+        Some(early_stop),   // Early stopping
+        Some(checkpoint),   // Checkpointing
+    ).await?;
+
+    // Switch to inference mode
+    nn.set_training_mode(false);
     
-    // Async evaluation
-    let final_loss = nn.evaluate_async(&inputs, &targets).await;
-    
-    println!("Async training completed with final loss: {:.6}", final_loss);
+    Ok(())
 }
 ```
-
-**Key Benefits of Async API:**
-
-- **Non-blocking operations** - Other tasks can run during training/inference
-- **Intelligent yielding** - Only yields for large workloads (>1000 elements or >10 batches)
-- **Better resource utilization** - Cooperative multitasking optimized for performance
 - **Scalable architecture** - Ideal for web services and concurrent applications
 - **Parallel batch processing** - Multiple predictions processed concurrently using futures
 
@@ -275,22 +320,85 @@ println!("Total parameters: {}", nn.parameter_count()); // 25
 let weights = nn.get_weights();
 nn.set_weights(weights);
 ```
+
 ## API Reference
 
 ### Core Types
 
-- **`Hextral`** - Main neural network struct
-- **`ActivationFunction`** - Enum for activation functions
-- **`Optimizer`** - Enum for optimization algorithms  
+- **`Hextral`** - Main neural network struct with async-first API
+- **`ActivationFunction`** - Enum for activation functions (9 available)
+- **`Optimizer`** - Enum for optimization algorithms (12 available)
 - **`Regularization`** - Enum for regularization techniques
+- **`EarlyStopping`** - Configuration for automatic training termination
+- **`CheckpointConfig`** - Configuration for model checkpointing
+- **`LossFunction`** - Enum for loss functions (5 available)
 
-### Key Methods
+### Primary Methods (All Async)
 
-- **`new()`** - Create a new neural network
-- **`train()`** - Train the network for multiple epochs
-- **`predict()`** - Make a single prediction
-- **`evaluate()`** - Compute loss on a dataset
-- **`set_regularization()`** - Configure regularization
+```rust
+// Network creation
+Hextral::new(inputs, hidden_layers, outputs, activation, optimizer) -> Hextral
+
+// Training with full feature set
+async fn train(
+    &mut self,
+    train_inputs: &[DVector<f64>],
+    train_targets: &[DVector<f64>],
+    learning_rate: f64,
+    epochs: usize,
+    batch_size: Option<usize>,
+    val_inputs: Option<&[DVector<f64>]>,
+    val_targets: Option<&[DVector<f64>]>,
+    early_stopping: Option<EarlyStopping>,
+    checkpoint_config: Option<CheckpointConfig>,
+) -> Result<(Vec<f64>, Vec<f64>), Box<dyn std::error::Error>>
+
+// Predictions
+async fn predict(&self, input: &DVector<f64>) -> DVector<f64>
+async fn predict_batch(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>>
+
+// Evaluation
+async fn evaluate(&self, inputs: &[DVector<f64>], targets: &[DVector<f64>]) -> f64
+
+// Forward pass
+async fn forward(&self, input: &DVector<f64>) -> DVector<f64>
+```
+
+### Configuration Methods
+
+```rust
+// Batch normalization
+fn enable_batch_norm(&mut self)
+fn disable_batch_norm(&mut self)
+fn set_training_mode(&mut self, training: bool)
+
+// Regularization
+fn set_regularization(&mut self, reg: Regularization)
+
+// Loss function
+fn set_loss_function(&mut self, loss: LossFunction)
+
+// Weight management
+fn get_weights(&self) -> Vec<(DMatrix<f64>, DVector<f64>)>
+fn set_weights(&mut self, weights: Vec<(DMatrix<f64>, DVector<f64>)>)
+fn parameter_count(&self) -> usize
+```
+
+### Early Stopping & Checkpointing
+
+```rust
+// Early stopping configuration
+let early_stop = EarlyStopping::new(
+    patience: usize,           // Epochs to wait for improvement
+    min_delta: f64,           // Minimum improvement threshold
+    restore_best_weights: bool // Whether to restore best weights
+);
+
+// Checkpoint configuration  
+let checkpoint = CheckpointConfig::new("model_path".to_string())
+    .save_every(10)           // Save every N epochs
+    .save_best(true);         // Save best model based on validation loss
+```
 
 ## Performance Tips
 
@@ -318,13 +426,17 @@ We welcome contributions! Please feel free to:
 - Improve documentation
 - Add more test cases
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Changelog
 
 ## Changelog
 
-### v0.6.0 (Latest)
+### v0.7.0 (Latest)
+- **Removed Redundancy**: Eliminated confusing duplicate methods and verbose naming patterns
+- **Better Performance**: Streamlined async implementation with intelligent yielding
+- **Updated Documentation**: All examples now use clean, consistent API
+- **All Tests Updated**: Comprehensive test suite updated for new API patterns
+
+### v0.6.0
 
 - **Full Async/Await Support**: Complete async API alongside synchronous methods
 - **Intelligent Yielding**: Performance-optimized async with yielding only for large workloads (>1000 elements)
@@ -355,3 +467,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Fixed critical bugs** in batch normalization and backward pass
 - **Added regularization support** - L1, L2, and Dropout
 - **Improved documentation** with usage examples and API reference
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
+## License
+
+This project is licensed under the MIT OR Apache-2.0 license.
