@@ -655,7 +655,18 @@ We welcome contributions! Please feel free to:
 
 ## Changelog
 
-### v0.7.0 (Latest)
+### v0.8.0 (Latest)
+- **Complete Dataset Loading System**: CSV and image dataset loaders with async-first API
+- **Comprehensive Data Preprocessing**: Normalization, standardization, one-hot encoding with dynamic category discovery
+- **Advanced Missing Value Handling**: Forward/backward fill, mean, median, mode, and constant strategies
+- **Principal Component Analysis (PCA)**: Full PCA implementation with power iteration and matrix deflation
+- **Image Data Augmentation**: Flip, rotation, brightness, contrast, and noise adjustments with proper pixel manipulation
+- **Advanced Label Extraction**: Multiple strategies for filename patterns, directory structure, and manual mapping
+- **Outlier Detection and Removal**: Statistical outlier removal using IQR method with configurable thresholds
+- **Polynomial Feature Engineering**: Automated polynomial feature expansion for improved model capacity
+- **Organized Checkpoint System**: Structured checkpoint storage with proper .gitignore configuration
+
+### v0.7.0
 - **Removed Redundancy**: Eliminated confusing duplicate methods and verbose naming patterns
 - **Better Performance**: Streamlined async implementation with intelligent yielding
 - **Updated Documentation**: All examples now use clean, consistent API
@@ -667,7 +678,6 @@ We welcome contributions! Please feel free to:
 - **Intelligent Yielding**: Performance-optimized async with yielding only for large workloads (>1000 elements)
 - **Concurrent Processing**: Parallel batch predictions using futures and join_all
 - **Async Training**: Non-blocking training with cooperative multitasking
-- **Code Optimization**: Removed verbose AI-generated patterns, cleaner professional code
 - **Performance Improvements**: Smart async yielding prevents unnecessary overhead
 - **Enhanced Documentation**: Updated examples and API documentation
 
