@@ -64,6 +64,7 @@ A high-performance neural network library for Rust with clean async-first API, c
 - **Ranger** - Combination of RAdam and LookAhead
 
 ### **Advanced Training Features**
+
 - **Early Stopping** - Automatic training termination based on validation loss
 - **Checkpointing** - Save and restore model weights with bincode serialization
 - **Regularization** - L1/L2 regularization and dropout support
@@ -72,8 +73,10 @@ A high-performance neural network library for Rust with clean async-first API, c
 - **Dual sync/async API** for both blocking and non-blocking operations
 - **Memory-Optimized Training** - Reduce memory usage with smart batch processing
 - **Adaptive Batch Sizing** - Automatic batch size recommendations based on available memory
+- **Dataset Validation** - Early detection of mismatched shapes and empty datasets
 
 ### **Production Features**
+
 - **Error Handling System** - Comprehensive error types with recovery suggestions
 - **Memory Pool Management** - Reuse objects to minimize allocation overhead
 - **Memory Usage Tracking** - Monitor and optimize memory consumption in real-time
@@ -82,6 +85,7 @@ A high-performance neural network library for Rust with clean async-first API, c
 - **Production Logging** - Structured logging with tracing integration
 
 ### **Async/Concurrent Processing**
+
 - **Async training methods** with cooperative multitasking
 - **Parallel batch prediction** using futures
 - **Intelligent yielding** - only yields for large workloads (>1000 elements)
@@ -177,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Training completed! Final loss: {:.4}", train_history.last().unwrap());
     
     // Evaluate on test set
-    let test_loss = nn.evaluate(test_features, test_targets).await;
+    let test_loss = nn.evaluate(test_features, test_targets).await?;
     println!("Test loss: {:.4}", test_loss);
     
     Ok(())
@@ -195,7 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a neural network: 2 inputs -> [4, 3] hidden -> 1 output
     let mut nn = Hextral::new(
         2,                                    // Input features
-        &[4, 3],                             // Hidden layer sizes  
+        &[4, 3],                              // Hidden layer sizes  
         1,                                    // Output size
         ActivationFunction::ReLU,             // Activation function
         Optimizer::adam(0.01),                // Modern Adam optimizer
@@ -250,14 +254,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Batch prediction (efficient for multiple inputs)
     let batch_predictions = nn.predict_batch(&train_inputs).await;
-    
+    println!("Batch predictions computed: {}", batch_predictions.len());
+
     // Evaluate performance
-    let final_loss = nn.evaluate(&train_inputs, &train_targets).await;
+    let final_loss = nn.evaluate(&train_inputs, &train_targets).await?;
     println!("Final loss: {:.6}", final_loss);
 
     Ok(())
 }
 ```
+
+### Configuration-Driven Setup (`config` feature)
+
+Enable the `config` feature to construct networks and training settings from declarative configuration files:
+
+```toml
+[dependencies]
+hextral = { version = "0.9.0", features = ["config"] }
+```
+
+Create a configuration file (TOML or YAML). Environment variables with the `HEXTRAL__` prefix override file values automatically.
+
+```toml
+# config/network.toml
+[network]
+input_size = 4
+hidden_layers = [8, 4]
+output_size = 2
+activation = "ReLU"
+optimizer = { Adam = { learning_rate = 0.005, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8 } }
+loss_function = "MeanSquaredError"
+regularization = "None"
+batch_norm = { enabled = true }
+
+[training]
+learning_rate = 0.005
+epochs = 25
+batch_size = 16
+
+[training.early_stopping]
+patience = 5
+min_delta = 0.0005
+restore_best_weights = true
+
+[training.checkpoint]
+filepath = "checkpoints/best_model.bin"
+save_best = true
+save_every = 10
+```
+
+```rust
+use hextral::{ConfigFormat, HextralConfig};
+use nalgebra::DVector;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let build = HextralConfig::from_file("config/network.toml")?
+        .builder()
+        .build()?;
+
+    let mut model = build.model;
+    let training = build.training;
+
+    let sample = DVector::from_vec(vec![0.25, 0.1, -0.05, 0.9]);
+    let prediction = model.predict(&sample).await;
+    println!("Prediction: {:?}", prediction);
+
+    if let Some(settings) = training {
+        println!("Training learning rate: {}", settings.learning_rate);
+    }
+
+    Ok(())
+}
+```
+
+You can override any configuration value via environment variables such as `HEXTRAL__TRAINING__LEARNING_RATE=0.001` or `HEXTRAL__NETWORK__INPUT_SIZE=16`.
 
 ### Memory Optimization Example
 
@@ -380,6 +451,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
 - **Scalable architecture** - Ideal for web services and concurrent applications
 - **Parallel batch processing** - Multiple predictions processed concurrently using futures
 
@@ -814,14 +886,14 @@ We welcome contributions! Please feel free to:
 
 ### v0.9.0 (Latest)
 
-- **Configuration Management System**: YAML/TOML configuration files with environment variable support
-- **Advanced Model Versioning**: Model versioning with backward compatibility and metadata storage
-- **Enhanced Testing Infrastructure**: Comprehensive test suite with property-based testing and benchmarks
-- **Async Runtime Optimization**: Custom executors with backpressure handling and streaming data processing
-- **Enterprise Features**: Distributed training support and model serving capabilities
-- **ONNX Export Support**: Export trained models to ONNX format for cross-platform deployment
-- **Model Integrity Checks**: Validation and integrity verification for model files
-- **Builder Pattern Architecture**: Fluent API for complex network architecture configuration
+- **Configuration Builder & Loader**: Declarative network definitions via TOML/YAML with environment overrides
+- **HextralBuilder API**: Fluent builder for programmatic setup and conversion into fully configured models
+- **Training Config Utilities**: Auto-convert config files into `EarlyStopping` and `CheckpointConfig` instances
+- **Config Feature Example**: Added runnable `config_builder_demo` showcasing configuration-driven workflows
+- **Integration Tests**: New configuration tests ensure builder parity with manual setup
+- **Safer Training Loop**: Backpropagation no longer clones layer weights and uses pre-update matrices for gradient flow
+- **Dataset Validation**: Training and evaluation now raise descriptive errors for mismatched or empty datasets
+- **Result-Based Evaluation**: `Hextral::evaluate` returns `HextralResult<f64>` for consistent error handling across the API
 
 ### v0.8.0
 

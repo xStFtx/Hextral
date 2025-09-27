@@ -13,8 +13,8 @@ pub enum HextralError {
     Prediction { message: String },
 
     #[error("Invalid input: {context} - {details}")]
-    InvalidInput { 
-        context: String, 
+    InvalidInput {
+        context: String,
         details: String,
         recoverable: bool,
     },
@@ -124,8 +124,12 @@ impl HextralError {
             HextralError::Training { .. } => ErrorSeverity::Warning,
             HextralError::Prediction { .. } => ErrorSeverity::Error,
             HextralError::InvalidInput { recoverable, .. } => {
-                if *recoverable { ErrorSeverity::Warning } else { ErrorSeverity::Error }
-            },
+                if *recoverable {
+                    ErrorSeverity::Warning
+                } else {
+                    ErrorSeverity::Error
+                }
+            }
             HextralError::Serialization { .. } => ErrorSeverity::Error,
             HextralError::Io { .. } => ErrorSeverity::Warning,
             HextralError::Computation { .. } => ErrorSeverity::Error,
@@ -234,7 +238,11 @@ impl std::fmt::Display for ContextualError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.error)?;
         if let Some(ref ctx) = self.context {
-            write!(f, " [Context: epoch={}, lr={}]", ctx.epoch, ctx.learning_rate)?;
+            write!(
+                f,
+                " [Context: epoch={}, lr={}]",
+                ctx.epoch, ctx.learning_rate
+            )?;
             if let Some(batch) = ctx.batch {
                 write!(f, " [batch={}]", batch)?;
             }

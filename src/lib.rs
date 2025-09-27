@@ -1,14 +1,14 @@
-use nalgebra::{DVector, DMatrix};
-use rand::{Rng, thread_rng};
-use rand::seq::SliceRandom;
 use futures::future::join_all;
-use serde::{Serialize, Deserialize};
+use nalgebra::{DMatrix, DVector};
+use rand::seq::SliceRandom;
+use rand::{thread_rng, Rng};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
 
 pub mod activation;
-pub mod optimizer;
 pub mod error;
+pub mod optimizer;
 
 #[cfg(feature = "performance")]
 pub mod batch;
@@ -22,24 +22,33 @@ pub mod monitoring;
 #[cfg(feature = "datasets")]
 pub mod dataset;
 
+#[cfg(feature = "config")]
+pub mod configuration;
+
 pub use activation::ActivationFunction;
+pub use error::{ContextualError, ErrorSeverity, HextralError, HextralResult, TrainingContext};
 pub use optimizer::{Optimizer, OptimizerState};
-pub use error::{HextralError, HextralResult, ErrorSeverity, TrainingContext, ContextualError};
 
 #[cfg(feature = "performance")]
-pub use batch::{BatchIterator, BatchProcessor, MemoryPool, BatchStats, DataStream};
+pub use batch::{BatchIterator, BatchProcessor, BatchStats, DataStream, MemoryPool};
 
 #[cfg(feature = "performance")]
-pub use memory::{MemoryManager, MemoryConfig, MemoryStats, GradientStorage, ActivationStorage};
+pub use memory::{ActivationStorage, GradientStorage, MemoryConfig, MemoryManager, MemoryStats};
 
 #[cfg(feature = "monitoring")]
 pub use monitoring::{
-    TrainingMonitor, ProgressCallback, EpochMetrics, TrainingResult, 
-    PerformanceProfiler, ConsoleProgressCallback
+    ConsoleProgressCallback, EpochMetrics, PerformanceProfiler, ProgressCallback, TrainingMonitor,
+    TrainingResult,
 };
 
 #[cfg(feature = "datasets")]
-pub use dataset::{Dataset, DatasetLoader, DatasetError, PreprocessingConfig, FillStrategy};
+pub use dataset::{Dataset, DatasetError, DatasetLoader, FillStrategy, PreprocessingConfig};
+
+#[cfg(feature = "config")]
+pub use configuration::{
+    BatchNormConfig, ConfigFormat, HextralBuild, HextralBuilder, HextralConfig, NetworkConfig,
+    TrainingConfig,
+};
 
 #[derive(Debug, Clone)]
 pub struct EarlyStopping {
@@ -60,7 +69,7 @@ impl EarlyStopping {
             restore_best_weights,
         }
     }
-    
+
     pub fn should_stop(&mut self, current_loss: f64) -> bool {
         if current_loss < self.best_loss - self.min_delta {
             self.best_loss = current_loss;
@@ -71,7 +80,7 @@ impl EarlyStopping {
             self.counter >= self.patience
         }
     }
-    
+
     pub fn reset(&mut self) {
         self.best_loss = f64::INFINITY;
         self.counter = 0;
@@ -95,18 +104,21 @@ impl CheckpointConfig {
             monitor_loss: true,
         }
     }
-    
+
     pub fn save_every(mut self, epochs: usize) -> Self {
         self.save_every = Some(epochs);
         self
     }
-    
-    pub async fn save_weights(&self, weights: &[(DMatrix<f64>, DVector<f64>)]) -> HextralResult<()> {
+
+    pub async fn save_weights(
+        &self,
+        weights: &[(DMatrix<f64>, DVector<f64>)],
+    ) -> HextralResult<()> {
         let data = bincode::serialize(weights)?;
         fs::write(&self.filepath, data).await?;
         Ok(())
     }
-    
+
     pub async fn load_weights(&self) -> HextralResult<Vec<(DMatrix<f64>, DVector<f64>)>> {
         let data = fs::read(&self.filepath).await?;
         let weights = bincode::deserialize(&data)?;
@@ -114,28 +126,26 @@ impl CheckpointConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum Regularization {
     L2(f64),
     L1(f64),
     Dropout(f64),
+    #[default]
     None,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LossFunction {
+    #[default]
     MeanSquaredError,
     MeanAbsoluteError,
     BinaryCrossEntropy,
     CategoricalCrossEntropy,
     /// Huber Loss: smooth combination of MSE and MAE
-    Huber { delta: f64 },
-}
-
-impl Default for LossFunction {
-    fn default() -> Self {
-        LossFunction::MeanSquaredError
-    }
+    Huber {
+        delta: f64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,27 +171,40 @@ impl BatchNormLayer {
             training: true,
         }
     }
-    
+
     /// Apply batch normalization forward pass
-    pub fn forward(&mut self, x: &DVector<f64>) -> (DVector<f64>, Option<(DVector<f64>, DVector<f64>, DVector<f64>)>) {
+    #[allow(clippy::type_complexity)]
+    pub fn forward(
+        &mut self,
+        x: &DVector<f64>,
+    ) -> (
+        DVector<f64>,
+        Option<(DVector<f64>, DVector<f64>, DVector<f64>)>,
+    ) {
         if self.training {
             // Training mode: compute batch statistics
             let mean = x.mean();
             let var = x.iter().map(|xi| (xi - mean).powi(2)).sum::<f64>() / x.len() as f64;
             let std_dev = (var + self.epsilon).sqrt();
-            
+
             // Normalize
             let normalized = x.map(|xi| (xi - mean) / std_dev);
-            
+
             // Scale and shift
             let output = normalized.component_mul(&self.gamma) + &self.beta;
-            
+
             // Update running statistics
-            self.running_mean = &self.running_mean * (1.0 - self.momentum) + &DVector::from_element(x.len(), mean * self.momentum);
-            self.running_var = &self.running_var * (1.0 - self.momentum) + &DVector::from_element(x.len(), var * self.momentum);
-            
+            self.running_mean = &self.running_mean * (1.0 - self.momentum)
+                + &DVector::from_element(x.len(), mean * self.momentum);
+            self.running_var = &self.running_var * (1.0 - self.momentum)
+                + &DVector::from_element(x.len(), var * self.momentum);
+
             // Return normalized values and cache for backward pass
-            let cache = Some((normalized, DVector::from_element(x.len(), mean), DVector::from_element(x.len(), std_dev)));
+            let cache = Some((
+                normalized,
+                DVector::from_element(x.len(), mean),
+                DVector::from_element(x.len(), std_dev),
+            ));
             (output, cache)
         } else {
             // Inference mode: use running statistics
@@ -192,7 +215,7 @@ impl BatchNormLayer {
             (output, None)
         }
     }
-    
+
     pub fn set_training(&mut self, training: bool) {
         self.training = training;
     }
@@ -208,11 +231,11 @@ pub struct Hextral {
     loss_function: LossFunction,
     batch_norm_layers: Vec<Option<BatchNormLayer>>,
     use_batch_norm: bool,
-    
+
     #[cfg(feature = "performance")]
     #[serde(skip)]
     memory_manager: Option<crate::memory::MemoryManager>,
-    
+
     #[cfg(feature = "performance")]
     #[serde(skip)]
     batch_processor: Option<crate::batch::BatchProcessor>,
@@ -230,30 +253,25 @@ impl Hextral {
         let mut rng = thread_rng();
 
         let mut prev_size = input_size;
-        
+
         // Initialize hidden layers with Xavier initialization
         for &size in hidden_sizes {
             let bound = (6.0 / (size + prev_size) as f64).sqrt();
-            let weight = DMatrix::from_fn(size, prev_size, |_, _| {
-                rng.gen_range(-bound..bound)
-            });
+            let weight = DMatrix::from_fn(size, prev_size, |_, _| rng.gen_range(-bound..bound));
             let bias = DVector::zeros(size);
             layers.push((weight, bias));
             prev_size = size;
         }
-        
+
         // Initialize output layer
         let bound = (6.0 / (output_size + prev_size) as f64).sqrt();
-        let weight = DMatrix::from_fn(output_size, prev_size, |_, _| {
-            rng.gen_range(-bound..bound)
-        });
+        let weight = DMatrix::from_fn(output_size, prev_size, |_, _| rng.gen_range(-bound..bound));
         let bias = DVector::zeros(output_size);
         layers.push((weight, bias));
 
         // Create layer shapes for optimizer state initialization
-        let layer_shapes: Vec<(usize, usize)> = layers.iter()
-            .map(|(w, _)| (w.nrows(), w.ncols()))
-            .collect();
+        let layer_shapes: Vec<(usize, usize)> =
+            layers.iter().map(|(w, _)| (w.nrows(), w.ncols())).collect();
 
         Hextral {
             layers,
@@ -264,10 +282,10 @@ impl Hextral {
             loss_function: LossFunction::default(),
             batch_norm_layers: Vec::new(),
             use_batch_norm: false,
-            
+
             #[cfg(feature = "performance")]
             memory_manager: None,
-            
+
             #[cfg(feature = "performance")]
             batch_processor: None,
         }
@@ -282,7 +300,7 @@ impl Hextral {
     pub fn set_loss_function(&mut self, loss: LossFunction) {
         self.loss_function = loss;
     }
-    
+
     /// Enable memory management optimizations
     #[cfg(feature = "performance")]
     pub fn enable_memory_optimization(&mut self, config: Option<crate::memory::MemoryConfig>) {
@@ -290,20 +308,20 @@ impl Hextral {
         self.memory_manager = Some(crate::memory::MemoryManager::new(config));
         self.batch_processor = Some(crate::batch::BatchProcessor::new(1000, 128));
     }
-    
+
     /// Disable memory optimizations
     #[cfg(feature = "performance")]
     pub fn disable_memory_optimization(&mut self) {
         self.memory_manager = None;
         self.batch_processor = None;
     }
-    
+
     /// Get memory statistics
     #[cfg(feature = "performance")]
     pub fn memory_stats(&self) -> Option<crate::memory::MemoryStats> {
         self.memory_manager.as_ref().map(|mm| mm.memory_stats())
     }
-    
+
     /// Recommend optimal batch size based on model and memory constraints
     #[cfg(feature = "performance")]
     pub fn recommend_batch_size(&self, available_memory_mb: usize) -> usize {
@@ -319,39 +337,38 @@ impl Hextral {
         if !self.use_batch_norm {
             self.use_batch_norm = true;
             self.batch_norm_layers.clear();
-            
+
             // Add batch norm layers for all but the output layer
             for i in 0..self.layers.len() - 1 {
                 let layer_size = self.layers[i].0.nrows(); // Number of outputs from this layer
-                self.batch_norm_layers.push(Some(BatchNormLayer::new(layer_size)));
+                self.batch_norm_layers
+                    .push(Some(BatchNormLayer::new(layer_size)));
             }
             // No batch norm for output layer
             self.batch_norm_layers.push(None);
         }
     }
-    
+
     /// Disable batch normalization
     pub fn disable_batch_norm(&mut self) {
         self.use_batch_norm = false;
         self.batch_norm_layers.clear();
     }
-    
+
     /// Set training mode for batch normalization
     pub fn set_training_mode(&mut self, training: bool) {
-        for bn_layer in &mut self.batch_norm_layers {
-            if let Some(bn) = bn_layer {
-                bn.set_training(training);
-            }
+        for bn in self.batch_norm_layers.iter_mut().flatten() {
+            bn.set_training(training);
         }
     }
 
     pub async fn forward(&self, input: &DVector<f64>) -> DVector<f64> {
         let mut output = input.clone();
-        
+
         // Only yield if network has many layers
         if self.layers.len() > 5 {
             let mid = self.layers.len() / 2;
-            
+
             for (i, (weight, bias)) in self.layers.iter().enumerate() {
                 output = weight * &output + bias;
                 if i < self.layers.len() - 1 {
@@ -369,7 +386,7 @@ impl Hextral {
                 }
             }
         }
-        
+
         output
     }
 
@@ -379,9 +396,7 @@ impl Hextral {
 
     pub async fn predict_batch(&self, inputs: &[DVector<f64>]) -> Vec<DVector<f64>> {
         if inputs.len() > 10 {
-            let futures: Vec<_> = inputs.iter()
-                .map(|input| self.predict(input))
-                .collect();
+            let futures: Vec<_> = inputs.iter().map(|input| self.predict(input)).collect();
             join_all(futures).await
         } else {
             let mut results = Vec::new();
@@ -391,29 +406,32 @@ impl Hextral {
             results
         }
     }
-    
+
     /// Optimized batch prediction with memory management
     #[cfg(feature = "performance")]
-    pub async fn predict_batch_optimized(&mut self, inputs: &[DVector<f64>]) -> HextralResult<Vec<DVector<f64>>> {
+    pub async fn predict_batch_optimized(
+        &mut self,
+        inputs: &[DVector<f64>],
+    ) -> HextralResult<Vec<DVector<f64>>> {
         if self.batch_processor.is_none() {
             self.enable_memory_optimization(None);
         }
-        
+
         let chunk_size = self.recommend_batch_size(256).min(inputs.len());
         let mut results = Vec::with_capacity(inputs.len());
-        
+
         for chunk in inputs.chunks(chunk_size) {
             for input in chunk {
                 let prediction = self.predict(input).await;
                 results.push(prediction);
             }
-            
+
             // Yield for large chunks
             if chunk_size > 50 {
                 tokio::task::yield_now().await;
             }
         }
-        
+
         Ok(results)
     }
 
@@ -423,19 +441,19 @@ impl Hextral {
             LossFunction::MeanSquaredError => {
                 let error = prediction - target;
                 0.5 * error.dot(&error)
-            },
+            }
             LossFunction::MeanAbsoluteError => {
                 let error = prediction - target;
                 error.iter().map(|x| x.abs()).sum::<f64>()
-            },
+            }
             LossFunction::BinaryCrossEntropy => {
                 let mut loss = 0.0;
                 for (pred, targ) in prediction.iter().zip(target.iter()) {
-                    let p = pred.max(1e-15).min(1.0 - 1e-15); // Clamp to avoid log(0)
+                    let p = pred.clamp(1e-15, 1.0 - 1e-15);
                     loss -= targ * p.ln() + (1.0 - targ) * (1.0 - p).ln();
                 }
                 loss
-            },
+            }
             LossFunction::CategoricalCrossEntropy => {
                 let mut loss = 0.0;
                 for (pred, targ) in prediction.iter().zip(target.iter()) {
@@ -444,7 +462,7 @@ impl Hextral {
                     }
                 }
                 loss
-            },
+            }
             LossFunction::Huber { delta } => {
                 let error = prediction - target;
                 let mut loss = 0.0;
@@ -461,24 +479,34 @@ impl Hextral {
     }
 
     /// Compute loss gradient for backpropagation
-    pub fn compute_loss_gradient(&self, prediction: &DVector<f64>, target: &DVector<f64>) -> DVector<f64> {
+    pub fn compute_loss_gradient(
+        &self,
+        prediction: &DVector<f64>,
+        target: &DVector<f64>,
+    ) -> DVector<f64> {
         match &self.loss_function {
-            LossFunction::MeanSquaredError => {
-                prediction - target
-            },
+            LossFunction::MeanSquaredError => prediction - target,
             LossFunction::MeanAbsoluteError => {
                 let error = prediction - target;
-                error.map(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 })
-            },
+                error.map(|x| {
+                    if x > 0.0 {
+                        1.0
+                    } else if x < 0.0 {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                })
+            }
             LossFunction::BinaryCrossEntropy => {
                 let mut grad = DVector::zeros(prediction.len());
                 for i in 0..prediction.len() {
-                    let p = prediction[i].max(1e-15).min(1.0 - 1e-15);
+                    let p = prediction[i].clamp(1e-15, 1.0 - 1e-15);
                     let t = target[i];
                     grad[i] = (p - t) / (p * (1.0 - p));
                 }
                 grad
-            },
+            }
             LossFunction::CategoricalCrossEntropy => {
                 let mut grad = DVector::zeros(prediction.len());
                 for i in 0..prediction.len() {
@@ -487,7 +515,7 @@ impl Hextral {
                     }
                 }
                 grad
-            },
+            }
             LossFunction::Huber { delta } => {
                 let error = prediction - target;
                 error.map(|e| {
@@ -501,79 +529,105 @@ impl Hextral {
         }
     }
 
-    pub async fn train_step(&mut self, input: &DVector<f64>, target: &DVector<f64>, learning_rate: f64) -> f64 {
+    pub async fn train_step(
+        &mut self,
+        input: &DVector<f64>,
+        target: &DVector<f64>,
+        learning_rate: f64,
+    ) -> f64 {
         // Forward pass - collect activations
-        let mut activations = vec![input.clone()];
+        let mut activations = Vec::with_capacity(self.layers.len() + 1);
+        activations.push(input.clone());
         let mut current = input.clone();
-        
-        for (i, (weight, bias)) in self.layers.iter().enumerate() {
+
+        for (index, (weight, bias)) in self.layers.iter().enumerate() {
             current = weight * &current + bias;
-            if i < self.layers.len() - 1 {
+            if index < self.layers.len() - 1 {
                 current = self.activation.apply(&current);
             }
             activations.push(current.clone());
         }
-        
-        let prediction = &activations[activations.len() - 1];
-        
+
+        let prediction = activations
+            .last()
+            .expect("activations always contain output");
+
         // Compute loss using configured loss function
         let loss = self.compute_loss(prediction, target);
-        
+
         // Backward pass - compute loss gradient
         let mut delta = self.compute_loss_gradient(prediction, target);
-        
-        for i in (0..self.layers.len()).rev() {
-            let input_activation = &activations[i];
-            let output_activation = &activations[i + 1];
-            
+
+        for layer_index in (0..self.layers.len()).rev() {
+            let input_activation = &activations[layer_index];
+            let output_activation = &activations[layer_index + 1];
+
             // Apply activation derivative (except for output layer)
-            if i < self.layers.len() - 1 {
+            if layer_index < self.layers.len() - 1 {
                 let activation_grad = self.activation.apply_derivative(output_activation);
                 delta = delta.component_mul(&activation_grad);
             }
-            
+
             // Compute gradients
-            let weight_grad = &delta * input_activation.transpose();
+            let mut weight_grad = &delta * input_activation.transpose();
             let bias_grad = delta.clone();
-            
-            // Apply regularization
-            let reg_weight_grad = match &self.regularization {
-                Regularization::L2(lambda) => &self.layers[i].0 * *lambda,
-                Regularization::L1(lambda) => self.layers[i].0.map(|w| *lambda * w.signum()),
-                _ => DMatrix::zeros(self.layers[i].0.nrows(), self.layers[i].0.ncols()),
+
+            let (weights, biases) = self
+                .layers
+                .get_mut(layer_index)
+                .expect("layer index is valid");
+
+            match &self.regularization {
+                Regularization::L2(lambda) => {
+                    weight_grad += &(*weights) * *lambda;
+                }
+                Regularization::L1(lambda) => {
+                    weight_grad += weights.map(|w| *lambda * w.signum());
+                }
+                Regularization::Dropout(rate) => {
+                    let keep_probability = 1.0 - *rate;
+                    if keep_probability <= 0.0 {
+                        weight_grad.fill(0.0);
+                    } else {
+                        weight_grad *= keep_probability;
+                    }
+                }
+                Regularization::None => {}
+            }
+
+            let next_delta = if layer_index > 0 {
+                Some(weights.transpose() * &delta)
+            } else {
+                None
             };
-            
-            let final_weight_grad = weight_grad + reg_weight_grad;
-            
-            // Update parameters using the new optimizer system
-            let (mut weights, mut biases) = self.layers[i].clone();
+
+            // Update parameters using the optimizer
             self.optimizer.update_parameters(
-                &mut weights,
-                &mut biases,
-                &final_weight_grad,
+                weights,
+                biases,
+                &weight_grad,
                 &bias_grad,
                 &mut self.optimizer_state,
-                i,
+                layer_index,
                 learning_rate,
             );
-            self.layers[i] = (weights, biases);
-            
-            // Propagate error to previous layer
-            if i > 0 {
-                delta = self.layers[i].0.transpose() * &delta;
+
+            if let Some(prev_delta) = next_delta {
+                delta = prev_delta;
             }
         }
-        
+
         // Yield occasionally for async compatibility
         if self.layers.len() > 3 {
             tokio::task::yield_now().await;
         }
-        
+
         loss
     }
 
     /// Optimized training method with memory management and batch processing
     #[cfg(feature = "performance")]
+    #[allow(clippy::too_many_arguments)]
     pub async fn train_optimized(
         &mut self,
         train_inputs: &[DVector<f64>],
@@ -586,47 +640,66 @@ impl Hextral {
         early_stopping: Option<EarlyStopping>,
         checkpoint_config: Option<CheckpointConfig>,
     ) -> HextralResult<(Vec<f64>, Vec<f64>)> {
+        self.validate_dataset(train_inputs, train_targets, "training data")?;
+
+        match (val_inputs, val_targets) {
+            (Some(inputs), Some(targets)) => {
+                self.validate_dataset(inputs, targets, "validation data")?;
+            }
+            (None, None) => {}
+            _ => {
+                return Err(HextralError::InvalidInput {
+                    context: "validation data".to_string(),
+                    details: "both validation inputs and targets must be provided".to_string(),
+                    recoverable: false,
+                });
+            }
+        }
+
         // Initialize performance optimizations if not already done
         if self.batch_processor.is_none() {
             self.enable_memory_optimization(None);
         }
-        
+
         let mut train_loss_history = Vec::new();
         let mut val_loss_history = Vec::new();
         let mut early_stop = early_stopping;
         let mut best_val_loss = f64::INFINITY;
-        
-        let effective_batch_size = batch_size.unwrap_or_else(|| {
-            self.recommend_batch_size(512) // Assume 512MB available
-        });
+
+        let effective_batch_size = batch_size
+            .unwrap_or_else(|| self.recommend_batch_size(512))
+            .max(1);
 
         for epoch in 0..epochs {
             let mut epoch_loss = 0.0;
             let mut indices: Vec<usize> = (0..train_inputs.len()).collect();
             indices.shuffle(&mut rand::thread_rng());
-            
+
             // Process batches
             for batch_indices in indices.chunks(effective_batch_size) {
                 let mut batch_loss = 0.0;
-                
+
                 // Process each sample in the batch
                 for &i in batch_indices {
-                    batch_loss += self.train_step(&train_inputs[i], &train_targets[i], learning_rate).await;
+                    batch_loss += self
+                        .train_step(&train_inputs[i], &train_targets[i], learning_rate)
+                        .await;
                 }
-                
+
                 epoch_loss += batch_loss;
-                
+
                 // Yield for large batches
                 if effective_batch_size > 50 {
                     tokio::task::yield_now().await;
                 }
             }
-            
+
             let train_loss = epoch_loss / train_inputs.len() as f64;
             train_loss_history.push(train_loss);
 
             // Validation phase
-            let val_loss = if let (Some(val_inputs), Some(val_targets)) = (val_inputs, val_targets) {
+            let val_loss = if let (Some(val_inputs), Some(val_targets)) = (val_inputs, val_targets)
+            {
                 self.evaluate_optimized(val_inputs, val_targets).await?
             } else {
                 train_loss
@@ -636,13 +709,15 @@ impl Hextral {
             // Checkpoint management
             if let Some(ref config) = checkpoint_config {
                 let should_save_best = config.save_best && val_loss < best_val_loss;
-                let should_save_periodic = config.save_every.map_or(false, |freq| (epoch + 1) % freq == 0);
-                
+                let should_save_periodic = config
+                    .save_every
+                    .is_some_and(|freq| (epoch + 1) % freq == 0);
+
                 if should_save_best {
                     best_val_loss = val_loss;
                     config.save_weights(&self.layers).await?;
                 }
-                
+
                 if should_save_periodic {
                     let periodic_path = format!("{}_epoch_{}", config.filepath, epoch + 1);
                     let periodic_config = CheckpointConfig::new(&periodic_path);
@@ -656,9 +731,8 @@ impl Hextral {
                     if early_stop.restore_best_weights {
                         if let Some(ref config) = checkpoint_config {
                             if config.save_best {
-                                match config.load_weights().await {
-                                    Ok(weights) => self.set_weights(weights),
-                                    Err(_) => {} // Continue with current weights if loading fails
+                                if let Ok(weights) = config.load_weights().await {
+                                    self.set_weights(weights);
                                 }
                             }
                         }
@@ -678,36 +752,44 @@ impl Hextral {
 
         Ok((train_loss_history, val_loss_history))
     }
-    
+
     /// Optimized evaluation method
     #[cfg(feature = "performance")]
-    pub async fn evaluate_optimized(&mut self, test_inputs: &[DVector<f64>], test_targets: &[DVector<f64>]) -> HextralResult<f64> {
+    pub async fn evaluate_optimized(
+        &mut self,
+        test_inputs: &[DVector<f64>],
+        test_targets: &[DVector<f64>],
+    ) -> HextralResult<f64> {
+        self.validate_dataset(test_inputs, test_targets, "evaluation data")?;
+
         if self.batch_processor.is_none() {
             self.enable_memory_optimization(None);
         }
-        
+
         let chunk_size = self.recommend_batch_size(256).min(test_inputs.len());
         let mut total_loss = 0.0;
-        
-        for chunk in test_inputs.chunks(chunk_size) {
-            let chunk_targets = &test_targets[..chunk.len()];
-            
-            for (input, target) in chunk.iter().zip(chunk_targets.iter()) {
+
+        for (chunk_inputs, chunk_targets) in test_inputs
+            .chunks(chunk_size)
+            .zip(test_targets.chunks(chunk_size))
+        {
+            for (input, target) in chunk_inputs.iter().zip(chunk_targets.iter()) {
                 let prediction = self.predict(input).await;
                 let loss = self.compute_loss(&prediction, target);
                 total_loss += loss;
             }
-            
+
             // Yield for large chunks
-            if chunk_size > 50 {
+            if chunk_inputs.len() > 50 {
                 tokio::task::yield_now().await;
             }
         }
-        
+
         Ok(total_loss / test_inputs.len() as f64)
     }
 
     /// Full async training method with early stopping and checkpoints
+    #[allow(clippy::too_many_arguments)]
     pub async fn train(
         &mut self,
         train_inputs: &[DVector<f64>],
@@ -720,33 +802,52 @@ impl Hextral {
         early_stopping: Option<EarlyStopping>,
         checkpoint_config: Option<CheckpointConfig>,
     ) -> HextralResult<(Vec<f64>, Vec<f64>)> {
+        self.validate_dataset(train_inputs, train_targets, "training data")?;
+
+        match (val_inputs, val_targets) {
+            (Some(inputs), Some(targets)) => {
+                self.validate_dataset(inputs, targets, "validation data")?;
+            }
+            (None, None) => {}
+            _ => {
+                return Err(HextralError::InvalidInput {
+                    context: "validation data".to_string(),
+                    details: "both validation inputs and targets must be provided".to_string(),
+                    recoverable: false,
+                });
+            }
+        }
+
         let mut train_loss_history = Vec::new();
         let mut val_loss_history = Vec::new();
         let mut early_stop = early_stopping;
         let mut best_val_loss = f64::INFINITY;
-        let batch_size = batch_size.unwrap_or(32);
+        let batch_size = batch_size.unwrap_or(32).max(1);
 
         for epoch in 0..epochs {
             // Training phase
             let mut epoch_loss = 0.0;
             let mut indices: Vec<usize> = (0..train_inputs.len()).collect();
             indices.shuffle(&mut thread_rng());
-            
+
             for batch in indices.chunks(batch_size) {
                 for &i in batch {
-                    epoch_loss += self.train_step(&train_inputs[i], &train_targets[i], learning_rate).await;
+                    epoch_loss += self
+                        .train_step(&train_inputs[i], &train_targets[i], learning_rate)
+                        .await;
                 }
                 if batch_size > 10 {
                     tokio::task::yield_now().await;
                 }
             }
-            
+
             let train_loss = epoch_loss / train_inputs.len() as f64;
             train_loss_history.push(train_loss);
 
             // Validation phase
-            let val_loss = if let (Some(val_inputs), Some(val_targets)) = (val_inputs, val_targets) {
-                self.evaluate(val_inputs, val_targets).await
+            let val_loss = if let (Some(val_inputs), Some(val_targets)) = (val_inputs, val_targets)
+            {
+                self.evaluate(val_inputs, val_targets).await?
             } else {
                 train_loss // Use training loss if no validation data
             };
@@ -755,13 +856,15 @@ impl Hextral {
             // Checkpoint management
             if let Some(ref config) = checkpoint_config {
                 let should_save_best = config.save_best && val_loss < best_val_loss;
-                let should_save_periodic = config.save_every.map_or(false, |freq| (epoch + 1) % freq == 0);
-                
+                let should_save_periodic = config
+                    .save_every
+                    .is_some_and(|freq| (epoch + 1) % freq == 0);
+
                 if should_save_best {
                     best_val_loss = val_loss;
                     config.save_weights(&self.layers).await?;
                 }
-                
+
                 if should_save_periodic {
                     let periodic_path = format!("{}_epoch_{}", config.filepath, epoch + 1);
                     let periodic_config = CheckpointConfig::new(&periodic_path);
@@ -775,9 +878,8 @@ impl Hextral {
                     if early_stop.restore_best_weights {
                         if let Some(ref config) = checkpoint_config {
                             if config.save_best {
-                                match config.load_weights().await {
-                                    Ok(weights) => self.set_weights(weights),
-                                    Err(_) => {} // Continue with current weights if loading fails
+                                if let Ok(weights) = config.load_weights().await {
+                                    self.set_weights(weights);
                                 }
                             }
                         }
@@ -795,32 +897,89 @@ impl Hextral {
         Ok((train_loss_history, val_loss_history))
     }
 
-    pub async fn evaluate(&self, test_inputs: &[DVector<f64>], test_targets: &[DVector<f64>]) -> f64 {
-        if test_inputs.len() > 10 {
+    pub async fn evaluate(
+        &self,
+        test_inputs: &[DVector<f64>],
+        test_targets: &[DVector<f64>],
+    ) -> HextralResult<f64> {
+        self.validate_dataset(test_inputs, test_targets, "evaluation data")?;
+
+        let total_loss = if test_inputs.len() > 10 {
             // Process predictions in parallel for large datasets
             let predictions = self.predict_batch(test_inputs).await;
-            
-            let mut total_loss = 0.0;
-            for (prediction, target) in predictions.iter().zip(test_targets.iter()) {
-                let loss = self.compute_loss(prediction, target);
-                total_loss += loss;
-            }
-            total_loss / test_inputs.len() as f64
+
+            predictions
+                .iter()
+                .zip(test_targets.iter())
+                .map(|(prediction, target)| self.compute_loss(prediction, target))
+                .sum()
         } else {
             // Process sequentially for small datasets
-            let mut total_loss = 0.0;
+            let mut total = 0.0;
             for (input, target) in test_inputs.iter().zip(test_targets.iter()) {
                 let prediction = self.predict(input).await;
-                let loss = self.compute_loss(&prediction, target);
-                total_loss += loss;
+                total += self.compute_loss(&prediction, target);
             }
-            total_loss / test_inputs.len() as f64
+            total
+        };
+
+        Ok(total_loss / test_inputs.len() as f64)
+    }
+
+    fn validate_dataset(
+        &self,
+        inputs: &[DVector<f64>],
+        targets: &[DVector<f64>],
+        context: &str,
+    ) -> HextralResult<()> {
+        if inputs.len() != targets.len() {
+            return Err(HextralError::InvalidInput {
+                context: context.to_string(),
+                details: format!(
+                    "inputs ({}) and targets ({}) must have the same length",
+                    inputs.len(),
+                    targets.len()
+                ),
+                recoverable: false,
+            });
         }
+
+        if inputs.is_empty() {
+            return Err(HextralError::InvalidInput {
+                context: context.to_string(),
+                details: "dataset must contain at least one sample".to_string(),
+                recoverable: false,
+            });
+        }
+
+        let expected_input = self.layers.first().map(|(w, _)| w.ncols()).unwrap_or(0);
+        let expected_output = self.layers.last().map(|(w, _)| w.nrows()).unwrap_or(0);
+
+        if let Some(sample) = inputs.first() {
+            if sample.len() != expected_input {
+                return Err(HextralError::InvalidDimensions {
+                    expected: expected_input,
+                    actual: sample.len(),
+                });
+            }
+        }
+
+        if let Some(sample) = targets.first() {
+            if sample.len() != expected_output {
+                return Err(HextralError::InvalidDimensions {
+                    expected: expected_output,
+                    actual: sample.len(),
+                });
+            }
+        }
+
+        Ok(())
     }
 
     /// Get the number of parameters in the network
     pub fn parameter_count(&self) -> usize {
-        self.layers.iter()
+        self.layers
+            .iter()
             .map(|(weight, bias)| weight.len() + bias.len())
             .sum()
     }

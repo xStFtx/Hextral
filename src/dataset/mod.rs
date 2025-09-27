@@ -12,15 +12,15 @@ pub mod preprocessing;
 #[async_trait::async_trait]
 pub trait DatasetLoader<T> {
     type Error: std::error::Error + Send + Sync + 'static;
-    
+
     /// Load a dataset from the given source
     async fn load(&self, source: T) -> Result<Dataset, Self::Error>;
-    
+
     /// Load a dataset with custom preprocessing options
     async fn load_with_preprocessing(
-        &self, 
-        source: T, 
-        preprocessing: &PreprocessingConfig
+        &self,
+        source: T,
+        preprocessing: &PreprocessingConfig,
     ) -> Result<Dataset, Self::Error>;
 }
 
@@ -90,14 +90,11 @@ pub enum FillStrategy {
 
 impl Dataset {
     /// Create a new dataset
-    pub fn new(
-        features: Vec<DVector<f64>>,
-        targets: Option<Vec<DVector<f64>>>,
-    ) -> Self {
+    pub fn new(features: Vec<DVector<f64>>, targets: Option<Vec<DVector<f64>>>) -> Self {
         let sample_count = features.len();
         let feature_count = features.first().map(|f| f.len()).unwrap_or(0);
         let target_count = targets.as_ref().and_then(|t| t.first().map(|t| t.len()));
-        
+
         Self {
             features,
             targets,
@@ -112,39 +109,41 @@ impl Dataset {
             },
         }
     }
-    
+
     /// Get a subset of the dataset
     pub fn subset(&self, indices: &[usize]) -> Dataset {
-        let features: Vec<DVector<f64>> = indices.iter()
+        let features: Vec<DVector<f64>> = indices
+            .iter()
             .filter_map(|&i| self.features.get(i).cloned())
             .collect();
-            
+
         let targets = self.targets.as_ref().map(|targets| {
-            indices.iter()
+            indices
+                .iter()
                 .filter_map(|&i| targets.get(i).cloned())
                 .collect()
         });
-        
+
         let mut subset = Dataset::new(features, targets);
         subset.feature_names = self.feature_names.clone();
         subset.target_names = self.target_names.clone();
         subset.metadata.source = self.metadata.source.clone();
         subset.metadata.data_type = self.metadata.data_type.clone();
-        
+
         subset
     }
-    
+
     /// Split dataset into training and testing sets
     pub fn train_test_split(&self, train_ratio: f64) -> (Dataset, Dataset) {
         let n_samples = self.features.len();
         let n_train = (n_samples as f64 * train_ratio) as usize;
-        
+
         let train_indices: Vec<usize> = (0..n_train).collect();
         let test_indices: Vec<usize> = (n_train..n_samples).collect();
-        
+
         (self.subset(&train_indices), self.subset(&test_indices))
     }
-    
+
     /// Get dataset statistics
     pub fn describe(&self) -> DatasetStats {
         DatasetStats::from_dataset(self)
@@ -173,31 +172,34 @@ impl DatasetStats {
     pub fn from_dataset(dataset: &Dataset) -> Self {
         let sample_count = dataset.features.len();
         let feature_count = dataset.metadata.feature_count;
-        
+
         let mut feature_stats = Vec::with_capacity(feature_count);
-        
+
         for feature_idx in 0..feature_count {
-            let values: Vec<f64> = dataset.features.iter()
+            let values: Vec<f64> = dataset
+                .features
+                .iter()
                 .filter_map(|feature| feature.get(feature_idx).copied())
                 .collect();
-                
+
             if values.is_empty() {
                 continue;
             }
-            
+
             let mean = values.iter().sum::<f64>() / values.len() as f64;
-            let variance = values.iter()
-                .map(|x| (x - mean).powi(2))
-                .sum::<f64>() / values.len() as f64;
+            let variance =
+                values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
             let std = variance.sqrt();
             let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
             let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
             let missing_count = sample_count - values.len();
-            
-            let name = dataset.feature_names.as_ref()
+
+            let name = dataset
+                .feature_names
+                .as_ref()
                 .and_then(|names| names.get(feature_idx))
                 .cloned();
-            
+
             feature_stats.push(FeatureStats {
                 name,
                 mean,
@@ -207,7 +209,7 @@ impl DatasetStats {
                 missing_count,
             });
         }
-        
+
         Self {
             sample_count,
             feature_count,
@@ -221,32 +223,32 @@ impl DatasetStats {
 pub enum DatasetError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Parse error: {0}")]
     Parse(String),
-    
+
     #[error("Invalid configuration: {0}")]
     Configuration(String),
-    
+
     #[error("Data validation error: {0}")]
     Validation(String),
-    
+
     #[error("Memory allocation error: {0}")]
     Memory(String),
-    
+
     #[error("Data corruption detected: {0}")]
     Corruption(String),
-    
+
     #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
-    
+
     #[error("Schema mismatch: expected {expected}, found {actual}")]
     SchemaMismatch { expected: String, actual: String },
-    
+
     #[cfg(feature = "datasets")]
     #[error("CSV error: {0}")]
     CsvError(String),
-    
+
     #[cfg(feature = "datasets")]
     #[error("Image error: {0}")]
     Image(#[from] ::image::ImageError),

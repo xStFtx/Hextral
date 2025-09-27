@@ -1,24 +1,24 @@
 use crate::{HextralError, HextralResult, TrainingContext};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "monitoring")]
-use tracing::{info, warn, error, debug, span, Level};
-#[cfg(feature = "monitoring")]
 use metrics::{counter, gauge, histogram};
+#[cfg(feature = "monitoring")]
+use tracing::{debug, error, info, span, warn, Level};
 
 /// Training progress callback trait for custom monitoring
 pub trait ProgressCallback: Send + Sync {
     /// Called at the start of training
     fn on_training_start(&mut self, context: &TrainingContext);
-    
+
     /// Called at the end of each epoch
     fn on_epoch_end(&mut self, context: &TrainingContext, metrics: &EpochMetrics);
-    
+
     /// Called when training completes (successfully or with errors)
     fn on_training_end(&mut self, context: &TrainingContext, result: &TrainingResult);
-    
+
     /// Called when an error occurs during training
     fn on_error(&mut self, context: &TrainingContext, error: &HextralError);
 }
@@ -134,7 +134,10 @@ impl PerformanceProfiler {
         let name = name.into();
         if let Some(start_time) = self.timers.remove(&name) {
             let duration = start_time.elapsed();
-            self.durations.entry(name).or_insert_with(Vec::new).push(duration);
+            self.durations
+                .entry(name)
+                .or_insert_with(Vec::new)
+                .push(duration);
             Some(duration)
         } else {
             None
@@ -149,7 +152,9 @@ impl PerformanceProfiler {
     }
 
     pub fn get_total_duration(&self, name: &str) -> Option<Duration> {
-        self.durations.get(name).map(|durations| durations.iter().sum())
+        self.durations
+            .get(name)
+            .map(|durations| durations.iter().sum())
     }
 
     pub fn reset(&mut self) {
@@ -189,14 +194,17 @@ impl TrainingMonitor {
     pub fn with_prometheus(mut self, port: u16) -> HextralResult<Self> {
         let builder = metrics_exporter_prometheus::PrometheusBuilder::new()
             .with_http_listener(([0, 0, 0, 0], port));
-        
+
         match builder.install() {
             Ok(_handle) => {
                 // Store the handle if needed for later use
                 info!("Prometheus metrics server started on port {}", port);
                 Ok(self)
             }
-            Err(e) => Err(HextralError::config(format!("Failed to start Prometheus server: {}", e))),
+            Err(e) => Err(HextralError::config(format!(
+                "Failed to start Prometheus server: {}",
+                e
+            ))),
         }
     }
 
@@ -216,7 +224,7 @@ impl TrainingMonitor {
             .with_file(true)
             .with_line_number(true)
             .init();
-        
+
         info!("Hextral tracing initialized");
         Ok(())
     }
@@ -225,7 +233,7 @@ impl TrainingMonitor {
     pub fn training_started(&mut self, context: &TrainingContext, sample_count: usize) {
         self.start_time = Some(Instant::now());
         self.sample_count = sample_count;
-        
+
         #[cfg(feature = "monitoring")]
         {
             info!(
@@ -263,9 +271,12 @@ impl TrainingMonitor {
                 metrics::gauge!("hextral_validation_loss", val_loss);
             }
             metrics::gauge!("hextral_learning_rate", metrics.learning_rate);
-            metrics::gauge!("hextral_throughput_samples_per_sec", metrics.throughput_samples_per_sec);
+            metrics::gauge!(
+                "hextral_throughput_samples_per_sec",
+                metrics.throughput_samples_per_sec
+            );
             metrics::histogram!("hextral_epoch_time_ms", metrics.total_epoch_time_ms());
-            
+
             if let Some(memory_mb) = metrics.memory_usage_mb {
                 metrics::gauge!("hextral_memory_usage_mb", memory_mb);
             }
@@ -378,41 +389,52 @@ impl ConsoleProgressCallback {
 
 impl ProgressCallback for ConsoleProgressCallback {
     fn on_training_start(&mut self, context: &TrainingContext) {
-        println!("Training started - Epoch: {}, LR: {:.6}", 
-                 context.epoch, context.learning_rate);
+        println!(
+            "Training started - Epoch: {}, LR: {:.6}",
+            context.epoch, context.learning_rate
+        );
     }
 
     fn on_epoch_end(&mut self, _context: &TrainingContext, metrics: &EpochMetrics) {
         if metrics.epoch % self.log_every_n_epochs == 0 {
-            let val_loss_str = metrics.validation_loss
+            let val_loss_str = metrics
+                .validation_loss
                 .map(|loss| format!(", Val Loss: {:.6}", loss))
                 .unwrap_or_default();
-            
-            println!("Epoch {}: Train Loss: {:.6}{}, Throughput: {:.1} samples/sec", 
-                     metrics.epoch, 
-                     metrics.train_loss,
-                     val_loss_str,
-                     metrics.throughput_samples_per_sec);
+
+            println!(
+                "Epoch {}: Train Loss: {:.6}{}, Throughput: {:.1} samples/sec",
+                metrics.epoch, metrics.train_loss, val_loss_str, metrics.throughput_samples_per_sec
+            );
         }
     }
 
     fn on_training_end(&mut self, _context: &TrainingContext, result: &TrainingResult) {
         if result.success {
-            println!("Training completed! Final Loss: {:.6}, Total Time: {:.2}s", 
-                     result.final_train_loss, 
-                     result.total_time_ms / 1000.0);
+            println!(
+                "Training completed! Final Loss: {:.6}, Total Time: {:.2}s",
+                result.final_train_loss,
+                result.total_time_ms / 1000.0
+            );
             if result.early_stopped {
                 println!("Early stopping triggered");
             }
         } else {
-            println!("Training failed: {}", result.error.as_deref().unwrap_or("Unknown error"));
+            println!(
+                "Training failed: {}",
+                result.error.as_deref().unwrap_or("Unknown error")
+            );
         }
     }
 
     fn on_error(&mut self, context: &TrainingContext, error: &HextralError) {
-        eprintln!("Training error at epoch {}: {} (Recoverable: {})", 
-                  context.epoch, error, error.is_recoverable());
-        
+        eprintln!(
+            "Training error at epoch {}: {} (Recoverable: {})",
+            context.epoch,
+            error,
+            error.is_recoverable()
+        );
+
         if error.is_recoverable() {
             println!("Suggestions:");
             for suggestion in error.recovery_suggestions() {

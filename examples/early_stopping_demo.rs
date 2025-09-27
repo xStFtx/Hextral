@@ -42,8 +42,19 @@ async fn main() -> HextralResult<()> {
     );
 
     println!("Training without early stopping (baseline):");
-    let _ = nn.train(&train_inputs, &train_targets, 0.01, 100, None, None, None, None, None).await?;
-    let baseline_val_loss = nn.evaluate(&val_inputs, &val_targets).await;
+    nn.train(
+        &train_inputs,
+        &train_targets,
+        0.01,
+        100,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await?;
+    let baseline_val_loss = nn.evaluate(&val_inputs, &val_targets).await?;
     println!("Final validation loss: {:.6}", baseline_val_loss);
 
     // Reset network for fair comparison
@@ -57,23 +68,31 @@ async fn main() -> HextralResult<()> {
 
     println!("\nTraining with early stopping (patience=10, min_delta=0.001):");
     let early_stop = EarlyStopping::new(10, 0.001, true);
-    let checkpoint_config = CheckpointConfig::new("checkpoints/early_stopping/model_checkpoint".to_string()).save_every(20);
+    let checkpoint_config =
+        CheckpointConfig::new("checkpoints/early_stopping/model_checkpoint".to_string())
+            .save_every(20);
 
-    let (train_history, val_history) = nn2.train(
-        &train_inputs,
-        &train_targets,
-        0.01,
-        100,
-        None,
-        Some(&val_inputs),
-        Some(&val_targets),
-        Some(early_stop),
-        Some(checkpoint_config),
-    ).await.unwrap();
+    let (train_history, val_history) = nn2
+        .train(
+            &train_inputs,
+            &train_targets,
+            0.01,
+            100,
+            None,
+            Some(&val_inputs),
+            Some(&val_targets),
+            Some(early_stop),
+            Some(checkpoint_config),
+        )
+        .await
+        .unwrap();
 
     println!("Training stopped after {} epochs", train_history.len());
-    println!("Final validation loss: {:.6}", val_history.last().unwrap_or(&0.0));
-    
+    println!(
+        "Final validation loss: {:.6}",
+        val_history.last().unwrap_or(&0.0)
+    );
+
     println!("\nValidation loss progression:");
     for (epoch, &loss) in val_history.iter().enumerate() {
         if epoch % 10 == 0 || epoch == val_history.len() - 1 {
@@ -92,7 +111,8 @@ async fn main() -> HextralResult<()> {
     );
 
     let early_stop_async = EarlyStopping::new(15, 0.0005, true);
-    let checkpoint_config_async = CheckpointConfig::new("checkpoints/early_stopping/async_model_checkpoint".to_string());
+    let checkpoint_config_async =
+        CheckpointConfig::new("checkpoints/early_stopping/async_model_checkpoint".to_string());
 
     let (train_history_async, val_history_async) = nn3
         .train(
@@ -106,16 +126,29 @@ async fn main() -> HextralResult<()> {
             Some(early_stop_async),
             Some(checkpoint_config_async),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
 
-    println!("Async training stopped after {} epochs", train_history_async.len());
-    println!("Final validation loss: {:.6}", val_history_async.last().unwrap_or(&0.0));
+    println!(
+        "Async training stopped after {} epochs",
+        train_history_async.len()
+    );
+    println!(
+        "Final validation loss: {:.6}",
+        val_history_async.last().unwrap_or(&0.0)
+    );
 
     // Compare convergence
     println!("\nConvergence comparison:");
     println!("Baseline (100 epochs): {:.6}", baseline_val_loss);
-    println!("Early stopping (sync): {:.6}", val_history.last().unwrap_or(&0.0));
-    println!("Early stopping (async): {:.6}", val_history_async.last().unwrap_or(&0.0));
-    
+    println!(
+        "Early stopping (sync): {:.6}",
+        val_history.last().unwrap_or(&0.0)
+    );
+    println!(
+        "Early stopping (async): {:.6}",
+        val_history_async.last().unwrap_or(&0.0)
+    );
+
     Ok(())
 }

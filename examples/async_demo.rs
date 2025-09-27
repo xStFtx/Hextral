@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         DVector::from_vec(vec![1.0, 0.0]),
         DVector::from_vec(vec![1.0, 1.0]),
     ];
-    
+
     let train_targets = vec![
         DVector::from_vec(vec![0.0]),
         DVector::from_vec(vec![1.0]),
@@ -37,11 +37,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut nn_async = nn.clone();
 
     let start = Instant::now();
-    let _ = nn_sync.train(&train_inputs, &train_targets, 0.1, 50, None, None, None, None, None).await?;
+    let _ = nn_sync
+        .train(
+            &train_inputs,
+            &train_targets,
+            0.1,
+            50,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
     let sync_time = start.elapsed();
-    
+
     let start = Instant::now();
-    let _ = nn_async.train(&train_inputs, &train_targets, 0.1, 50, Some(2), None, None, None, None).await?;
+    let _ = nn_async
+        .train(
+            &train_inputs,
+            &train_targets,
+            0.1,
+            50,
+            Some(2),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
     let async_time = start.elapsed();
 
     println!("First time: {:?}", sync_time);
@@ -60,11 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nPredictions:");
     for (i, input) in test_inputs.iter().enumerate() {
-        println!("[{:.0}, {:.0}] -> First: {:.3} | Batched: {:.3}", 
-                input[0], input[1], 
-                predictions1[i][0], 
-                predictions2[i][0]);
+        println!(
+            "[{:.0}, {:.0}] -> First: {:.3} | Batched: {:.3}",
+            input[0], input[1], predictions1[i][0], predictions2[i][0]
+        );
     }
-    
+
     Ok(())
 }
